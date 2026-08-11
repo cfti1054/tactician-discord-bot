@@ -1,0 +1,38 @@
+# Secrets / environment
+.env
+.env.local
+.env.*.local
+secrets.json
+*.pem
+*.key
+credentials.json
+token.json
+
+# Runtime / local data (server-specific IDs & user activity)
+config.json
+activity.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~

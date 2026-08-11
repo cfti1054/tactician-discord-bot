@@ -1,0 +1,207 @@
+================================================================================
+  tactician-discord-bot 작업 정리
+  최종 수정: 2026-08-11
+================================================================================
+
+■ Git 커밋 기록
+--------------------------------------------------------------------------------
+  (최신 항목이 위)
+
+  [미커밋] 2026-08-11
+  슬래시 명령·공지·멤버목록·활동집계 모듈 추가
+  .env.example / config·activity example / .gitignore / README 정리
+
+  [1854c2f] 저장소 초기 생성
+  README, .gitattributes
+
+
+■ 1. 프로젝트 개요
+--------------------------------------------------------------------------------
+Python + discord.py 기반 Discord 봇.
+
+봇 이름   : Tactician Bot
+실행 방법 : python bot.py
+주요 기능 :
+  · 슬래시 명령 (/ping, /공지설정, /공지, /멤버목록, /출석조회, /활동통계)
+  · 공지 채널 설정 + 모달로 공지 임베드 게시
+  · 멤버목록 채널 자동 생성·게시 + CSV 다운로드 버튼
+  · 음성/메시지 활동 집계 (KST 일별) → activity.json 저장
+
+
+■ 2. 파일 구조
+--------------------------------------------------------------------------------
+tactician-discord-bot/
+├── bot.py                   # 메인: 공지·멤버목록·슬래시 동기화
+├── activity_tracker.py      # Cog: 활동 집계·출석조회·CSV 내보내기
+├── requirements.txt         # 의존성
+├── .env                     # 실제 토큰 (로컬 전용, 커밋 금지)
+├── .env.example             # 환경 변수 예시
+├── config.json              # 공지/멤버목록 채널 ID (로컬, 커밋 금지)
+├── config.example.json      # config 예시
+├── activity.json            # 활동 집계 데이터 (로컬, 커밋 금지)
+├── activity.example.json    # activity 예시
+├── .gitignore
+├── README.md
+├── WORK_NOTES.txt           # 이 파일
+└── Image/                   # 봇 이미지·배너 에셋
+
+
+■ 3. 설치 패키지
+--------------------------------------------------------------------------------
+  discord.py      2.7.1    Discord API 연동
+  python-dotenv   1.0.1    .env 환경 변수 로드
+
+  설치: pip install -r requirements.txt
+  환경: Python 3.9 (Anaconda)
+
+
+■ 4. Discord 설정 (Developer Portal)
+--------------------------------------------------------------------------------
+[필수 Intent]
+  Message Content Intent  — 메시지 수 집계(on_message)에 필요
+  Server Members Intent   — 멤버 목록·캐시(guild.chunk / fetch_members)에 필요
+
+  위치: Applications → Bot → Privileged Gateway Intents
+
+[초대 권한 권장]
+  OAuth2 → URL Generator
+  Scopes : bot, applications.commands
+  권한 예시:
+    · 메시지 보내기 / 임베드 링크 / 파일 첨부
+    · 채널 관리 (멤버목록 채널 자동 생성)
+    · 서버 관리 권한은 슬래시 default_permissions와 별개
+      (실제 사용 제한은 명령의 Manage Guild 기본 권한으로 걸림)
+
+[Bot Token]
+  .env의 DISCORD_TOKEN에 저장. Git에 올리면 안 됩니다.
+
+
+■ 5. 환경 변수
+--------------------------------------------------------------------------------
+  DISCORD_TOKEN  — (필수) 봇 토큰
+  GUILD_ID       — (선택) 지정 시 해당 서버에 슬래시 명령 즉시 동기화
+                   미설정 시 전역 동기화 (반영 최대 약 1시간)
+                   GUILD_ID가 있으면 활동 집계도 그 서버만 추적
+
+  설정:
+    cp .env.example .env
+    cp config.example.json config.json   # 필요 시
+    cp activity.example.json activity.json
+
+
+■ 6. 슬래시 명령어
+--------------------------------------------------------------------------------
+[bot.py]
+  /ping        — 생존 확인 (Pong!)
+  /공지설정    — 공지 올릴 텍스트 채널 지정 → config.json 저장
+  /공지        — 모달(제목·내용)로 공지 임베드 게시
+  /멤버목록    — Manage Guild 필요
+                 "멤버목록" 채널 찾거나 생성 후 목록 게시
+                 CSV 다운로드 버튼(1시간)
+
+[activity_tracker.py]
+  /출석조회    — Manage Guild 필요
+                 멤버(기본: 본인) 출석일수·음성·메시지 요약 + 최근 7일
+  /활동통계    — Manage Guild 필요
+                 서버 전체 활동 CSV ephemeral 첨부
+
+
+■ 7. 활동 집계 (activity_tracker)
+--------------------------------------------------------------------------------
+저장 파일 : activity.json (KST Asia/Seoul 기준 일별)
+
+집계 항목:
+  voice_joins     — 음성 채널 입장(또는 채널 이동) 횟수
+  voice_seconds   — 음성 체류 초 (자정 넘기면 날짜별 분배)
+  voice_messages  — 음성/스테이지 채널 채팅 수
+  messages        — 일반 텍스트 채널 메시지 수
+
+출석 판정:
+  해당 날짜에 위 항목 중 하나라도 > 0 이면 출석일
+
+데이터 형태(요약):
+  {
+    "<guild_id>": {
+      "_guild_name": "...",
+      "<user_id>": {
+        "_user_name": "...",
+        "YYYY-MM-DD": {
+          "voice_joins": 0,
+          "voice_seconds": 0,
+          "voice_messages": 0,
+          "messages": 0
+        }
+      }
+    }
+  }
+
+봇 재시작 시:
+  이미 음성에 있는 멤버는 on_ready에서 세션만 동기화
+  (재시작 직전 구간 초는 누락될 수 있음)
+
+
+■ 8. bot.py / 모듈 구조
+--------------------------------------------------------------------------------
+bot.py
+  load_dotenv() → TOKEN / GUILD_ID
+  config.json 로드·저장 (공지·멤버목록 채널)
+  setup_hook → ActivityTracker Cog 로드
+  on_ready
+    · 슬래시 sync (guild 또는 global)
+    · GUILD_ID 있으면 guild.chunk()로 멤버 캐시
+    · 설정된 채널 상태 로그
+  슬래시: ping / 공지설정 / 공지 / 멤버목록
+
+activity_tracker.py
+  ActivityStore  — JSON 읽기/쓰기·집계
+  ActivityTracker Cog
+    · on_voice_state_update / on_message
+    · /출석조회, /활동통계
+  setup_activity_tracker(bot, guild_id)
+
+
+■ 9. 발생했던 오류 / 주의
+--------------------------------------------------------------------------------
+  ValueError: DISCORD_TOKEN 미설정
+  → .env 없거나 DISCORD_TOKEN 비어 있음
+  → cp .env.example .env 후 토큰 입력
+
+  PrivilegedIntentsRequired
+  → Message Content / Server Members Intent 미활성화
+  → Developer Portal에서 ON 후 재실행
+
+  슬래시 명령이 안 보임
+  → GUILD_ID 설정 후 재시작(즉시 sync) 권장
+  → 전역 sync는 최대 약 1시간 소요
+  → 초대 시 applications.commands 스코프 포함 여부 확인
+
+
+■ 10. Git 보안
+--------------------------------------------------------------------------------
+  커밋 금지: .env, config.json, activity.json, secrets.json, __pycache__/
+  커밋 가능: .env.example, config.example.json, activity.example.json,
+             .gitignore, bot.py, activity_tracker.py, requirements.txt,
+             Image/, README.md, WORK_NOTES.txt
+
+  로컬 설정 복사:
+    cp .env.example .env
+    cp config.example.json config.json
+    cp activity.example.json activity.json
+
+
+■ 11. 실행 순서
+--------------------------------------------------------------------------------
+  1. pip install -r requirements.txt
+  2. .env에 DISCORD_TOKEN (및 선택 GUILD_ID) 설정
+  3. Developer Portal에서 Message Content + Server Members Intent ON
+  4. bot + applications.commands 로 서버 초대
+  5. python bot.py
+
+
+■ 12. 참고 링크
+--------------------------------------------------------------------------------
+  Discord Developer Portal : https://discord.com/developers/applications
+  Discord API 문서         : https://discord.com/developers/docs/intro
+  discord.py 문서          : https://discordpy.readthedocs.io/
+
+================================================================================
