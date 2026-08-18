@@ -9,8 +9,8 @@ credentials.json
 token.json
 
 # Runtime / local data (server-specific IDs & user activity)
-config.json
-activity.json
+data/config.json
+data/activity.json
 
 # Python
 __pycache__/

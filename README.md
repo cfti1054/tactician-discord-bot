@@ -7,13 +7,15 @@ Python + discord.py Discord bot.
 1. Install dependencies:
 
 ```bash
-pip install -r requirements.txt
+pip install -r src/requirements.txt
 ```
 
-2. Create local env from the example (already present as `.env`):
+2. Create local config files from examples:
 
 ```bash
 cp .env.example .env
+cp data/config.example.json data/config.json
+cp data/activity.example.json data/activity.json
 ```
 
 3. Edit `.env` and set:
@@ -26,8 +28,8 @@ cp .env.example .env
 - Message Content Intent
 - Server Members Intent
 
-5. Invite the bot (OAuth2 → URL Generator → scopes: `bot`, `applications.commands`) and run:
+5. Invite the bot (OAuth2 → URL Generator → scopes: `bot`, `applications.commands`) and run from the project root:
 
 ```bash
-python bot.py
+python src/bot.py
 ```

@@ -13,8 +13,9 @@ from discord import app_commands
 from discord.ext import commands
 
 KST = ZoneInfo("Asia/Seoul")
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-ACTIVITY_FILE = os.path.join(BASE_DIR, "activity.json")
+SRC_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(SRC_DIR)
+ACTIVITY_FILE = os.path.join(PROJECT_ROOT, "data", "activity.json")
 TRACKED_FIELDS = ("voice_joins", "voice_seconds", "voice_messages", "messages")
 GUILD_NAME_KEY = "_guild_name"
 USER_NAME_KEY = "_user_name"

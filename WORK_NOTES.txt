@@ -20,7 +20,7 @@
 Python + discord.py 기반 Discord 봇.
 
 봇 이름   : Tactician Bot
-실행 방법 : python bot.py
+실행 방법 : python src/bot.py  (프로젝트 루트에서 실행)
 주요 기능 :
   · 슬래시 명령 (/ping, /공지설정, /공지, /멤버목록, /출석조회, /활동통계)
   · 공지 채널 설정 + 모달로 공지 임베드 게시
@@ -31,19 +31,24 @@ Python + discord.py 기반 Discord 봇.
 ■ 2. 파일 구조
 --------------------------------------------------------------------------------
 tactician-discord-bot/
-├── bot.py                   # 메인: 공지·멤버목록·슬래시 동기화
-├── activity_tracker.py      # Cog: 활동 집계·출석조회·CSV 내보내기
-├── requirements.txt         # 의존성
+├── src/                     # 실행 코드
+│   ├── bot.py               # 메인: 공지·멤버목록·슬래시 동기화
+│   ├── activity_tracker.py  # Cog: 활동 집계·출석조회·CSV 내보내기
+│   └── requirements.txt     # 의존성
+├── data/                    # JSON 설정·데이터
+│   ├── config.json          # 공지/멤버목록 채널 ID (로컬, 커밋 금지)
+│   ├── config.example.json  # config 예시
+│   ├── activity.json        # 활동 집계 데이터 (로컬, 커밋 금지)
+│   └── activity.example.json
 ├── .env                     # 실제 토큰 (로컬 전용, 커밋 금지)
 ├── .env.example             # 환경 변수 예시
-├── config.json              # 공지/멤버목록 채널 ID (로컬, 커밋 금지)
-├── config.example.json      # config 예시
-├── activity.json            # 활동 집계 데이터 (로컬, 커밋 금지)
-├── activity.example.json    # activity 예시
 ├── .gitignore
 ├── README.md
 ├── WORK_NOTES.txt           # 이 파일
 └── Image/                   # 봇 이미지·배너 에셋
+
+  .env는 프로젝트 루트, JSON은 data/ 폴더에 둡니다.
+  src/ 코드는 위 경로를 기준으로 읽고 씁니다.
 
 
 ■ 3. 설치 패키지
@@ -51,7 +56,7 @@ tactician-discord-bot/
   discord.py      2.7.1    Discord API 연동
   python-dotenv   1.0.1    .env 환경 변수 로드
 
-  설치: pip install -r requirements.txt
+  설치: pip install -r src/requirements.txt
   환경: Python 3.9 (Anaconda)
 
 
@@ -85,15 +90,15 @@ tactician-discord-bot/
 
   설정:
     cp .env.example .env
-    cp config.example.json config.json   # 필요 시
-    cp activity.example.json activity.json
+    cp data/config.example.json data/config.json   # 필요 시
+    cp data/activity.example.json data/activity.json
 
 
 ■ 6. 슬래시 명령어
 --------------------------------------------------------------------------------
 [bot.py]
   /ping        — 생존 확인 (Pong!)
-  /공지설정    — 공지 올릴 텍스트 채널 지정 → config.json 저장
+  /공지설정    — 공지 올릴 텍스트 채널 지정 → data/config.json 저장
   /공지        — 모달(제목·내용)로 공지 임베드 게시
   /멤버목록    — Manage Guild 필요
                  "멤버목록" 채널 찾거나 생성 후 목록 게시
@@ -108,7 +113,7 @@ tactician-discord-bot/
 
 ■ 7. 활동 집계 (activity_tracker)
 --------------------------------------------------------------------------------
-저장 파일 : activity.json (KST Asia/Seoul 기준 일별)
+저장 파일 : data/activity.json (KST Asia/Seoul 기준 일별)
 
 집계 항목:
   voice_joins     — 음성 채널 입장(또는 채널 이동) 횟수
@@ -144,7 +149,7 @@ tactician-discord-bot/
 --------------------------------------------------------------------------------
 bot.py
   load_dotenv() → TOKEN / GUILD_ID
-  config.json 로드·저장 (공지·멤버목록 채널)
+  data/config.json 로드·저장 (공지·멤버목록 채널)
   setup_hook → ActivityTracker Cog 로드
   on_ready
     · 슬래시 sync (guild 또는 global)
@@ -178,24 +183,23 @@ activity_tracker.py
 
 ■ 10. Git 보안
 --------------------------------------------------------------------------------
-  커밋 금지: .env, config.json, activity.json, secrets.json, __pycache__/
-  커밋 가능: .env.example, config.example.json, activity.example.json,
-             .gitignore, bot.py, activity_tracker.py, requirements.txt,
-             Image/, README.md, WORK_NOTES.txt
+  커밋 금지: .env, data/config.json, data/activity.json, secrets.json, __pycache__/
+  커밋 가능: .env.example, data/config.example.json, data/activity.example.json,
+             .gitignore, src/, README.md, WORK_NOTES.txt
 
   로컬 설정 복사:
     cp .env.example .env
-    cp config.example.json config.json
-    cp activity.example.json activity.json
+    cp data/config.example.json data/config.json
+    cp data/activity.example.json data/activity.json
 
 
 ■ 11. 실행 순서
 --------------------------------------------------------------------------------
-  1. pip install -r requirements.txt
+  1. pip install -r src/requirements.txt
   2. .env에 DISCORD_TOKEN (및 선택 GUILD_ID) 설정
   3. Developer Portal에서 Message Content + Server Members Intent ON
   4. bot + applications.commands 로 서버 초대
-  5. python bot.py
+  5. python src/bot.py
 
 
 ■ 12. 참고 링크

@@ -10,7 +10,10 @@ from dotenv import load_dotenv
 
 from activity_tracker import setup_activity_tracker
 
-load_dotenv()
+SRC_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(SRC_DIR)
+
+load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 if not TOKEN:
@@ -18,7 +21,7 @@ if not TOKEN:
 
 GUILD_ID = os.getenv("GUILD_ID")
 
-CONFIG_FILE = "config.json"
+CONFIG_FILE = os.path.join(PROJECT_ROOT, "data", "config.json")
 
 NOTICE_CHANNEL_ID = None
 NOTICE_CHANNEL_NAME = None
