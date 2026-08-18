@@ -1,11 +1,15 @@
 ================================================================================
   tactician-discord-bot 작업 정리
-  최종 수정: 2026-08-11
+  최종 수정: 2026-08-18
 ================================================================================
 
 ■ Git 커밋 기록
 --------------------------------------------------------------------------------
   (최신 항목이 위)
+
+  [미커밋] 2026-08-18
+  REST API 추가 (FastAPI). 봇+API 동시 실행(src/main.py)
+  기간별 출결 리포트·멤버 요약 엔드포인트
 
   [미커밋] 2026-08-11
   슬래시 명령·공지·멤버목록·활동집계 모듈 추가
@@ -20,32 +24,43 @@
 Python + discord.py 기반 Discord 봇.
 
 봇 이름   : Tactician Bot
-실행 방법 : python src/bot.py  (프로젝트 루트에서 실행)
+실행 방법 :
+  python src/main.py   봇 + REST API (Railway / 외부 조회)
+  python src/bot.py    봇만 실행
 주요 기능 :
   · 슬래시 명령 (/ping, /공지설정, /공지, /멤버목록, /출석조회, /활동통계)
   · 공지 채널 설정 + 모달로 공지 임베드 게시
   · 멤버목록 채널 자동 생성·게시 + CSV 다운로드 버튼
   · 음성/메시지 활동 집계 (KST 일별) → activity.json 저장
+  · REST API로 기간별 출결·활동 조회 (포인트 계산은 외부 시스템)
 
 
 ■ 2. 파일 구조
 --------------------------------------------------------------------------------
 tactician-discord-bot/
-├── src/                     # 실행 코드
-│   ├── bot.py               # 메인: 공지·멤버목록·슬래시 동기화
+├── src/
+│   ├── main.py              # 봇 + FastAPI 동시 실행
+│   ├── bot.py               # Discord 봇: 공지·멤버목록·슬래시 동기화
 │   ├── activity_tracker.py  # Cog: 활동 집계·출석조회·CSV 내보내기
-│   └── requirements.txt     # 의존성
+│   ├── api/                 # REST API
+│   │   ├── app.py           # FastAPI 앱
+│   │   ├── auth.py          # Bearer API_KEY, guild 접근 제한
+│   │   ├── deps.py          # ActivityStore 주입
+│   │   ├── schemas.py       # 응답 모델
+│   │   └── routes/
+│   │       └── attendance.py
+│   └── requirements.txt
 ├── data/                    # JSON 설정·데이터
 │   ├── config.json          # 공지/멤버목록 채널 ID (로컬, 커밋 금지)
-│   ├── config.example.json  # config 예시
+│   ├── config.example.json
 │   ├── activity.json        # 활동 집계 데이터 (로컬, 커밋 금지)
 │   └── activity.example.json
 ├── .env                     # 실제 토큰 (로컬 전용, 커밋 금지)
-├── .env.example             # 환경 변수 예시
+├── .env.example
 ├── .gitignore
 ├── README.md
-├── WORK_NOTES.txt           # 이 파일
-└── Image/                   # 봇 이미지·배너 에셋
+├── WORK_NOTES.txt
+└── Image/
 
   .env는 프로젝트 루트, JSON은 data/ 폴더에 둡니다.
   src/ 코드는 위 경로를 기준으로 읽고 씁니다.
@@ -53,8 +68,10 @@ tactician-discord-bot/
 
 ■ 3. 설치 패키지
 --------------------------------------------------------------------------------
-  discord.py      2.7.1    Discord API 연동
-  python-dotenv   1.0.1    .env 환경 변수 로드
+  discord.py      Discord API 연동
+  python-dotenv   .env 환경 변수 로드
+  fastapi         REST API
+  uvicorn         ASGI 서버
 
   설치: pip install -r src/requirements.txt
   환경: Python 3.9 (Anaconda)
@@ -86,7 +103,10 @@ tactician-discord-bot/
   DISCORD_TOKEN  — (필수) 봇 토큰
   GUILD_ID       — (선택) 지정 시 해당 서버에 슬래시 명령 즉시 동기화
                    미설정 시 전역 동기화 (반영 최대 약 1시간)
-                   GUILD_ID가 있으면 활동 집계도 그 서버만 추적
+                   설정 시 활동 집계·REST API 접근도 그 서버만 허용
+  API_KEY        — (REST API 필수) Authorization: Bearer <API_KEY>
+  PORT           — REST API 포트 (기본 8000, Railway는 자동 주입)
+  ACTIVITY_FILE  — (선택) 활동 JSON 경로. Railway Volume 예: /data/activity.json
 
   설정:
     cp .env.example .env
@@ -114,6 +134,7 @@ tactician-discord-bot/
 ■ 7. 활동 집계 (activity_tracker)
 --------------------------------------------------------------------------------
 저장 파일 : data/activity.json (KST Asia/Seoul 기준 일별)
+            ACTIVITY_FILE 환경 변수로 경로 변경 가능
 
 집계 항목:
   voice_joins     — 음성 채널 입장(또는 채널 이동) 횟수
@@ -122,7 +143,8 @@ tactician-discord-bot/
   messages        — 일반 텍스트 채널 메시지 수
 
 출석 판정:
-  해당 날짜에 위 항목 중 하나라도 > 0 이면 출석일
+  attended  — 해당 날짜에 위 항목 중 하나라도 > 0
+  qualified — voice_seconds >= min_voice_seconds (API 쿼리, 기본 0)
 
 데이터 형태(요약):
   {
@@ -145,8 +167,36 @@ tactician-discord-bot/
   (재시작 직전 구간 초는 누락될 수 있음)
 
 
-■ 8. bot.py / 모듈 구조
+■ 8. REST API
 --------------------------------------------------------------------------------
+실행: python src/main.py  (discord.py 봇과 uvicorn을 같은 프로세스에서 실행)
+문서: http://localhost:8000/docs
+
+  GET /health
+    인증 없음. Railway 헬스체크용.
+
+  GET /api/v1/guilds/{guild_id}/attendance-report
+    Query: from, to (YYYY-MM-DD, KST), min_voice_seconds (기본 0)
+    기간 내 활동이 있는 멤버 + 일별 상세(attended/qualified)
+
+  GET /api/v1/guilds/{guild_id}/members/summary
+    위와 동일, 일별 배열 없음 (대시보드·포인트 배치용)
+
+  GET /api/v1/guilds/{guild_id}/members/{user_id}
+    특정 멤버 기간 상세. 데이터 없으면 404.
+
+인증: Authorization: Bearer <API_KEY>
+GUILD_ID가 설정되어 있으면 다른 guild_id 요청은 403.
+
+포인트 계산은 API에 포함하지 않음. 외부에서 qualified_days 등을 사용.
+
+
+■ 9. bot.py / 모듈 구조
+--------------------------------------------------------------------------------
+main.py
+  load_dotenv() → bot.start() + uvicorn.Server.serve() 병렬 실행
+  Railway는 PORT를 listen 해야 Public URL이 동작함
+
 bot.py
   load_dotenv() → TOKEN / GUILD_ID
   data/config.json 로드·저장 (공지·멤버목록 채널)
@@ -156,16 +206,20 @@ bot.py
     · GUILD_ID 있으면 guild.chunk()로 멤버 캐시
     · 설정된 채널 상태 로그
   슬래시: ping / 공지설정 / 공지 / 멤버목록
+  python src/bot.py 로 단독 실행 가능
 
 activity_tracker.py
-  ActivityStore  — JSON 읽기/쓰기·집계
+  ActivityStore  — JSON 읽기/쓰기·기간 집계
   ActivityTracker Cog
     · on_voice_state_update / on_message
     · /출석조회, /활동통계
   setup_activity_tracker(bot, guild_id)
 
+api/
+  FastAPI가 bot.get_cog("ActivityTracker").store 를 공유해서 읽기
 
-■ 9. 발생했던 오류 / 주의
+
+■ 10. 발생했던 오류 / 주의
 --------------------------------------------------------------------------------
   ValueError: DISCORD_TOKEN 미설정
   → .env 없거나 DISCORD_TOKEN 비어 있음
@@ -180,8 +234,18 @@ activity_tracker.py
   → 전역 sync는 최대 약 1시간 소요
   → 초대 시 applications.commands 스코프 포함 여부 확인
 
+  REST API 401
+  → Authorization: Bearer <API_KEY> 누락 또는 API_KEY 불일치
 
-■ 10. Git 보안
+  REST API 503 API_KEY 미설정
+  → Railway Variables / .env 에 API_KEY 추가
+
+  Railway 재배포 후 activity.json 초기화
+  → 컨테이너 파일시스템은 휘발성. Volume을 /data 에 달고
+    ACTIVITY_FILE=/data/activity.json 설정
+
+
+■ 11. Git 보안
 --------------------------------------------------------------------------------
   커밋 금지: .env, data/config.json, data/activity.json, secrets.json, __pycache__/
   커밋 가능: .env.example, data/config.example.json, data/activity.example.json,
@@ -193,19 +257,22 @@ activity_tracker.py
     cp data/activity.example.json data/activity.json
 
 
-■ 11. 실행 순서
+■ 12. 실행 순서
 --------------------------------------------------------------------------------
   1. pip install -r src/requirements.txt
-  2. .env에 DISCORD_TOKEN (및 선택 GUILD_ID) 설정
+  2. .env에 DISCORD_TOKEN, API_KEY (및 선택 GUILD_ID) 설정
   3. Developer Portal에서 Message Content + Server Members Intent ON
   4. bot + applications.commands 로 서버 초대
-  5. python src/bot.py
+  5. python src/main.py
+  6. Railway: Start Command = python src/main.py
+     Public Networking ON, 변수에 DISCORD_TOKEN / API_KEY / GUILD_ID
 
 
-■ 12. 참고 링크
+■ 13. 참고 링크
 --------------------------------------------------------------------------------
   Discord Developer Portal : https://discord.com/developers/applications
   Discord API 문서         : https://discord.com/developers/docs/intro
   discord.py 문서          : https://discordpy.readthedocs.io/
+  FastAPI 문서             : https://fastapi.tiangolo.com/
 
 ================================================================================

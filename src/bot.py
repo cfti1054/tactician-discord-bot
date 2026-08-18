@@ -350,4 +350,5 @@ async def member_list(interaction: discord.Interaction):
     )
 
 
-bot.run(TOKEN)
+if __name__ == "__main__":
+    bot.run(TOKEN)

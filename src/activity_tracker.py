@@ -11,11 +11,16 @@ from zoneinfo import ZoneInfo
 import discord
 from discord import app_commands
 from discord.ext import commands
+from dotenv import load_dotenv
 
 KST = ZoneInfo("Asia/Seoul")
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SRC_DIR)
-ACTIVITY_FILE = os.path.join(PROJECT_ROOT, "data", "activity.json")
+load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
+ACTIVITY_FILE = os.getenv(
+    "ACTIVITY_FILE",
+    os.path.join(PROJECT_ROOT, "data", "activity.json"),
+)
 TRACKED_FIELDS = ("voice_joins", "voice_seconds", "voice_messages", "messages")
 GUILD_NAME_KEY = "_guild_name"
 USER_NAME_KEY = "_user_name"
@@ -98,6 +103,9 @@ class ActivityStore:
 
     async def save(self) -> None:
         async with self.lock:
+            directory = os.path.dirname(self.filepath)
+            if directory:
+                os.makedirs(directory, exist_ok=True)
             with open(self.filepath, "w", encoding="utf-8") as file:
                 json.dump(self.data, file, indent=4, ensure_ascii=False)
 
@@ -170,6 +178,17 @@ class ActivityStore:
         name = user_data.get(USER_NAME_KEY)
         return name if isinstance(name, str) else None
 
+    def get_guild_name(self, guild_id: int) -> Optional[str]:
+        name = self.data.get(str(guild_id), {}).get(GUILD_NAME_KEY)
+        return name if isinstance(name, str) else None
+
+    def has_guild(self, guild_id: int) -> bool:
+        return str(guild_id) in self.data
+
+    def has_user(self, guild_id: int, user_id: int) -> bool:
+        guild_data = self.data.get(str(guild_id), {})
+        return str(user_id) in filter_guild_users(guild_data)
+
     def summarize_user(self, guild_id: int, user_id: int) -> dict:
         daily_stats = self.get_user_stats(guild_id, user_id)
         totals = {field: 0 for field in TRACKED_FIELDS}
@@ -186,6 +205,80 @@ class ActivityStore:
             "daily_stats": daily_stats,
             **totals,
         }
+
+    def summarize_user_period(
+        self,
+        guild_id: int,
+        user_id: int,
+        from_date: str,
+        to_date: str,
+        min_voice_seconds: int = 0,
+        include_daily: bool = True,
+    ) -> dict:
+        daily_stats = self.get_user_stats(guild_id, user_id)
+        totals = {field: 0 for field in TRACKED_FIELDS}
+        attendance_days = 0
+        qualified_days = 0
+        daily = []
+
+        for date_key in sorted(daily_stats.keys()):
+            if date_key < from_date or date_key > to_date:
+                continue
+            day = daily_stats[date_key]
+            attended = is_attendance_day(day)
+            qualified = day.get("voice_seconds", 0) >= min_voice_seconds
+            if attended:
+                attendance_days += 1
+            if qualified:
+                qualified_days += 1
+            for field in TRACKED_FIELDS:
+                totals[field] += day.get(field, 0)
+            if include_daily:
+                daily.append(
+                    {
+                        "date": date_key,
+                        **{field: day.get(field, 0) for field in TRACKED_FIELDS},
+                        "attended": attended,
+                        "qualified": qualified,
+                    }
+                )
+
+        result = {
+            "user_id": str(user_id),
+            "user_name": self.get_user_name(guild_id, user_id),
+            "attendance_days": attendance_days,
+            "qualified_days": qualified_days,
+            **totals,
+        }
+        if include_daily:
+            result["daily"] = daily
+        return result
+
+    def summarize_guild_period(
+        self,
+        guild_id: int,
+        from_date: str,
+        to_date: str,
+        min_voice_seconds: int = 0,
+        include_daily: bool = True,
+        skip_empty: bool = True,
+    ) -> list:
+        members = []
+        for user_id in self.get_guild_stats(guild_id):
+            summary = self.summarize_user_period(
+                guild_id,
+                int(user_id),
+                from_date,
+                to_date,
+                min_voice_seconds,
+                include_daily=include_daily,
+            )
+            if skip_empty and summary["attendance_days"] == 0:
+                continue
+            members.append(summary)
+
+        members.sort(key=lambda row: (row.get("user_name") or row["user_id"]).lower())
+        return members
 
 
 class ActivityTracker(commands.Cog):
