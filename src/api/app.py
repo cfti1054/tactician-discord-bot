@@ -12,7 +12,7 @@ from api.schemas import HealthResponse
 def create_app(bot: commands.Bot) -> FastAPI:
     app = FastAPI(
         title="Tactician Bot API",
-        description="Discord 멤버 활동·출결 조회 API. 포인트 계산은 호출 측에서 수행합니다.",
+        description="Discord 멤버 활동·출결 조회 API.",
         version="1.0.0",
     )
     app.state.bot = bot

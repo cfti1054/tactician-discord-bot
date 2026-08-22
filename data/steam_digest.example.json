@@ -1,0 +1,9 @@
+{
+    "channel_id": null,
+    "channel_name": null,
+    "min_discount": 50,
+    "seen_ids": [],
+    "seen_sale_ids": [],
+    "active_sale_id": null,
+    "initialized": false
+}

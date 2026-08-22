@@ -1,11 +1,15 @@
 ================================================================================
   tactician-discord-bot 작업 정리
-  최종 수정: 2026-08-18
+  최종 수정: 2026-08-21
 ================================================================================
 
 ■ Git 커밋 기록
 --------------------------------------------------------------------------------
   (최신 항목이 위)
+
+  [미커밋] 2026-08-21
+  TFT 공식 패치·소식 수집 + 규칙 기반 요약 + Discord 자동 알림
+  AI API 없이 공식 사이트 HTML(__NEXT_DATA__) 파싱
 
   [미커밋] 2026-08-18
   REST API 추가 (FastAPI). 봇+API 동시 실행(src/main.py)
@@ -28,10 +32,12 @@ Python + discord.py 기반 Discord 봇.
   python src/main.py   봇 + REST API (Railway / 외부 조회)
   python src/bot.py    봇만 실행
 주요 기능 :
-  · 슬래시 명령 (/ping, /공지설정, /공지, /멤버목록, /출석조회, /활동통계)
+  · 슬래시 명령 (/ping, /공지설정, /공지, /멤버목록, /출석조회, /활동통계,
+                 /tft알림설정, /tft패치, /tft소식)
   · 공지 채널 설정 + 모달로 공지 임베드 게시
   · 멤버목록 채널 자동 생성·게시 + CSV 다운로드 버튼
   · 음성/메시지 활동 집계 (KST 일별) → activity.json 저장
+  · 공식 TFT 패치·소식 수집 후 규칙 기반 요약 → Discord 알림
   · REST API로 기간별 출결·활동 조회 (포인트 계산은 외부 시스템)
 
 
@@ -42,6 +48,12 @@ tactician-discord-bot/
 │   ├── main.py              # 봇 + FastAPI 동시 실행
 │   ├── bot.py               # Discord 봇: 공지·멤버목록·슬래시 동기화
 │   ├── activity_tracker.py  # Cog: 활동 집계·출석조회·CSV 내보내기
+│   ├── tft/                 # 공식 TFT 패치·소식 (AI 없음)
+│   │   ├── __init__.py      # setup_tft_digest
+│   │   ├── client.py        # 공식 사이트 수집·카드 파싱
+│   │   ├── summarize.py     # 변경 줄 상향/하향 분류
+│   │   ├── store.py         # tft_digest.json
+│   │   └── cog.py           # /tft알림설정 /tft패치 /tft소식 + 주기 알림
 │   ├── api/                 # REST API
 │   │   ├── app.py           # FastAPI 앱
 │   │   ├── auth.py          # Bearer API_KEY, guild 접근 제한
@@ -54,7 +66,8 @@ tactician-discord-bot/
 │   ├── config.json          # 공지/멤버목록 채널 ID (로컬, 커밋 금지)
 │   ├── config.example.json
 │   ├── activity.json        # 활동 집계 데이터 (로컬, 커밋 금지)
-│   └── activity.example.json
+│   ├── activity.example.json
+│   └── tft_digest.example.json
 ├── .env                     # 실제 토큰 (로컬 전용, 커밋 금지)
 ├── .env.example
 ├── .gitignore
@@ -107,6 +120,8 @@ tactician-discord-bot/
   API_KEY        — (REST API 필수) Authorization: Bearer <API_KEY>
   PORT           — REST API 포트 (기본 8000, Railway는 자동 주입)
   ACTIVITY_FILE  — (선택) 활동 JSON 경로. Railway Volume 예: /data/activity.json
+  TFT_DIGEST_FILE — (선택) TFT 알림 상태 JSON 경로. Volume 예: /data/tft_digest.json
+  TFT_POLL_MINUTES — (선택) 공식 사이트 확인 주기(분). 기본 30
 
   설정:
     cp .env.example .env
@@ -129,6 +144,11 @@ tactician-discord-bot/
                  멤버(기본: 본인) 출석일수·음성·메시지 요약 + 최근 7일
   /활동통계    — Manage Guild 필요
                  서버 전체 활동 CSV ephemeral 첨부
+
+[tft/cog.py]
+  /tft알림설정 — Manage Guild 필요. 자동 알림 채널 지정
+  /tft패치     — 최신 공식 패치 노트를 규칙 기반으로 상향/하향 요약
+  /tft소식     — 공식 새 소식 최근 5건 (제목+링크)
 
 
 ■ 7. 활동 집계 (activity_tracker)
@@ -200,7 +220,7 @@ main.py
 bot.py
   load_dotenv() → TOKEN / GUILD_ID
   data/config.json 로드·저장 (공지·멤버목록 채널)
-  setup_hook → ActivityTracker Cog 로드
+  setup_hook → ActivityTracker Cog + TftDigest Cog 로드
   on_ready
     · 슬래시 sync (guild 또는 global)
     · GUILD_ID 있으면 guild.chunk()로 멤버 캐시
@@ -247,9 +267,10 @@ api/
 
 ■ 11. Git 보안
 --------------------------------------------------------------------------------
-  커밋 금지: .env, data/config.json, data/activity.json, secrets.json, __pycache__/
+  커밋 금지: .env, data/config.json, data/activity.json, data/tft_digest.json,
+             secrets.json, __pycache__/
   커밋 가능: .env.example, data/config.example.json, data/activity.example.json,
-             .gitignore, src/, README.md, WORK_NOTES.txt
+             data/tft_digest.example.json, .gitignore, src/, README.md, WORK_NOTES.txt
 
   로컬 설정 복사:
     cp .env.example .env

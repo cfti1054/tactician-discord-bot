@@ -11,6 +11,8 @@ token.json
 # Runtime / local data (server-specific IDs & user activity)
 data/config.json
 data/activity.json
+data/tft_digest.json
+data/steam_digest.json
 
 # Python
 __pycache__/

@@ -1,7 +1,7 @@
 import io
 import json
 import os
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import discord
 from discord import app_commands
@@ -9,6 +9,8 @@ from discord.ext import commands
 from dotenv import load_dotenv
 
 from activity_tracker import setup_activity_tracker
+from steam import setup_steam_deals
+from tft import setup_tft_digest
 
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SRC_DIR)
@@ -206,6 +208,8 @@ bot = commands.Bot(
 
 async def setup_hook():
     await setup_activity_tracker(bot, guild_id=GUILD_ID)
+    await setup_tft_digest(bot, guild_id=GUILD_ID)
+    await setup_steam_deals(bot, guild_id=GUILD_ID)
 
 
 bot.setup_hook = setup_hook
@@ -348,6 +352,92 @@ async def member_list(interaction: discord.Interaction):
         f"CSV가 필요하면 채널 메시지의 **CSV 다운로드** 버튼을 눌러주세요.",
         ephemeral=True,
     )
+
+
+@bot.tree.command(name="채팅삭제", description="채널의 최근 메시지를 삭제합니다.")
+@app_commands.describe(
+    count="삭제할 메시지 개수 (1~100)",
+    channel="삭제할 채널 (미입력 시 현재 채널)",
+    pinned="고정(핀)된 메시지도 함께 삭제할지 여부",
+)
+@app_commands.default_permissions(manage_messages=True)
+async def clear_messages(
+    interaction: discord.Interaction,
+    count: app_commands.Range[int, 1, 100],
+    channel: Optional[discord.TextChannel] = None,
+    pinned: bool = False,
+):
+    if interaction.guild is None:
+        await interaction.response.send_message(
+            "❌ 서버에서만 사용할 수 있습니다.",
+            ephemeral=True,
+        )
+        return
+
+    target_channel = channel or interaction.channel
+    if not isinstance(target_channel, discord.TextChannel):
+        await interaction.response.send_message(
+            "❌ 텍스트 채널에서만 사용할 수 있습니다.",
+            ephemeral=True,
+        )
+        return
+
+    me = interaction.guild.me
+    if me is None:
+        await interaction.response.send_message(
+            "❌ 봇 정보를 확인할 수 없습니다.",
+            ephemeral=True,
+        )
+        return
+
+    permissions = target_channel.permissions_for(me)
+    if not permissions.manage_messages:
+        await interaction.response.send_message(
+            f"❌ {target_channel.mention}에서 **메시지 관리** 권한이 없습니다.",
+            ephemeral=True,
+        )
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    def should_delete(message: discord.Message) -> bool:
+        if message.pinned and not pinned:
+            return False
+        return True
+
+    try:
+        deleted = await target_channel.purge(
+            limit=count,
+            check=should_delete,
+            reason=f"채팅삭제 명령 ({interaction.user})",
+        )
+    except discord.Forbidden:
+        await interaction.followup.send(
+            f"❌ {target_channel.mention}의 메시지를 삭제할 권한이 없습니다.",
+            ephemeral=True,
+        )
+        return
+    except discord.HTTPException as exc:
+        if getattr(exc, "code", None) == 50034:
+            await interaction.followup.send(
+                "❌ Discord는 **14일이 지난 메시지**를 한 번에 삭제할 수 없습니다.\n"
+                "최근 14일 이내 메시지만 삭제 가능합니다.",
+                ephemeral=True,
+            )
+            return
+        await interaction.followup.send(
+            f"❌ 메시지 삭제 중 오류가 발생했습니다.\n`{exc}`",
+            ephemeral=True,
+        )
+        return
+
+    result = (
+        f"✅ {target_channel.mention}에서 **{len(deleted)}개** 메시지를 삭제했습니다."
+    )
+    if not pinned:
+        result += "\n📌 고정 메시지는 기본적으로 삭제하지 않습니다."
+
+    await interaction.followup.send(result, ephemeral=True)
 
 
 if __name__ == "__main__":

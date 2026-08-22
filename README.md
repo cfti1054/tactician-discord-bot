@@ -18,6 +18,8 @@ cp data/config.example.json data/config.json
 cp data/activity.example.json data/activity.json
 ```
 
+TFT 패치 알림 상태 파일은 봇이 `data/tft_digest.json`을 자동 생성합니다. Railway Volume을 쓰면 `TFT_DIGEST_FILE=/data/tft_digest.json`으로 경로를 바꿀 수 있습니다.
+
 3. Edit `.env` and set:
 
 - `DISCORD_TOKEN` — required (Discord Developer Portal → Bot → Token)
@@ -43,6 +45,29 @@ Bot only:
 ```bash
 python src/bot.py
 ```
+
+## TFT 패치·소식 (AI 없음)
+
+공식 TFT 사이트([패치 노트](https://teamfighttactics.leagueoflegends.com/ko-kr/news/tags/patch-notes/), [새 소식](https://teamfighttactics.leagueoflegends.com/ko-kr/news/))를 주기적으로 확인하고, 변경 줄을 규칙으로 상향/하향/조정으로 나눠 Discord에 올립니다. OpenAI 등 유료 API는 사용하지 않습니다.
+
+| 명령 | 설명 |
+|------|------|
+| `/tft알림설정` | 자동 알림 채널 지정 (서버 관리 권한) |
+| `/tft패치` | 최신 공식 패치 요약 |
+| `/tft소식` | 공식 새 소식 최근 5건 |
+
+알림 채널을 처음 설정하면 현재 최신 패치 1건을 올리고, 이후에는 새로 올라온 패치·게임 업데이트·개발자 글만 알립니다. 확인 주기는 기본 30분(`TFT_POLL_MINUTES`)입니다.
+
+## Steam 할인 알림 (AI 없음)
+
+Steam 스토어([특가 목록](https://store.steampowered.com/search/?specials=1))에서 할인 게임을 주기적으로 확인하고 Discord에 알립니다. **한국 스토어(`kr`)** 가격 기준이며, API 키는 필요 없습니다.
+
+| 명령 | 설명 |
+|------|------|
+| `/스팀알림설정` | 알림 채널 + 최소 할인율 설정 (서버 관리 권한) |
+| `/스팀할인` | 할인 게임 목록 조회 |
+
+처음 채널을 설정하면 현재 할인 목록을 보여 주고, 이후에는 **새로 감지된 할인**만 알립니다. 겨울·여름·설 등 **대형 시즌 세일**이 시작되면 별도 공지를 한 번 올리고, 세일 기간 중에는 개별 할인 알림을 잠시 쉽니다. 확인 주기는 기본 60분(`STEAM_POLL_MINUTES`)입니다.
 
 ## REST API
 
