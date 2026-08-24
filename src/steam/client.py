@@ -12,16 +12,17 @@ import aiohttp
 STEAM_STORE = "https://store.steampowered.com"
 USER_AGENT = "TacticianDiscordBot/1.0 (Steam sale digest)"
 SEARCH_ROW_RE = re.compile(
-    r'data-ds-appid="(?P<app_id>\d+)".*?'
-    r'(?:data-ds-tagids="(?P<tagids>\[[^\]]*\])".*?)?'
-    r'(?:data-ds-descids="(?P<descids>\[[^\]]*\])".*?)?'
-    r'<span class="title">(?P<name>.*?)</span>.*?'
-    r'data-discount="(?P<discount>\d+)".*?'
-    r'data-price-final="(?P<final>\d+)".*?'
-    r'<div class="discount_original_price">(?P<original>.*?)</div>.*?'
-    r'<div class="discount_final_price">(?P<final_text>.*?)</div>',
-    re.DOTALL,
+    r'<a\s+([^>]*class="search_result_row[^"]*"[^>]*)>(.*?)</a>',
+    re.DOTALL | re.IGNORECASE,
 )
+ROW_APP_ID_RE = re.compile(r'data-ds-appid="(?P<app_id>\d+)"')
+ROW_TAGIDS_RE = re.compile(r'data-ds-tagids="(?P<tagids>\[[^\]]*\])"')
+ROW_DESCIDS_RE = re.compile(r'data-ds-descids="(?P<descids>\[[^\]]*\])"')
+ROW_TITLE_RE = re.compile(r'<span class="title">(?P<name>[^<]+)</span>')
+ROW_DISCOUNT_RE = re.compile(r'data-discount="(?P<discount>\d+)"')
+ROW_FINAL_PRICE_RE = re.compile(r'data-price-final="(?P<final>\d+)"')
+ROW_ORIGINAL_TEXT_RE = re.compile(r'discount_original_price">(?P<original>[^<]+)')
+ROW_FINAL_TEXT_RE = re.compile(r'discount_final_price">(?P<final_text>[^<]+)')
 TAG_BROWSE_RE = re.compile(r'data-tagid="(\d+)"[^>]*>([^<]+)')
 MAX_DISPLAY_TAGS = 3
 SKIP_TAG_NAMES = {
@@ -337,23 +338,45 @@ class SteamStoreClient:
         tag_names = tag_names or {}
         deals: List[SteamDeal] = []
         seen: set[int] = set()
-        for match in SEARCH_ROW_RE.finditer(html):
-            app_id = int(match.group("app_id"))
+        for row_match in SEARCH_ROW_RE.finditer(html):
+            attrs = row_match.group(1)
+            body = row_match.group(2)
+
+            app_match = ROW_APP_ID_RE.search(attrs)
+            title_match = ROW_TITLE_RE.search(body)
+            discount_match = ROW_DISCOUNT_RE.search(body)
+            if not app_match or not title_match or not discount_match:
+                continue
+
+            app_id = int(app_match.group("app_id"))
             if app_id in seen:
                 continue
             seen.add(app_id)
-            name = re.sub(r"\s+", " ", match.group("name")).strip()
-            original_text = match.group("original").strip()
-            tag_ids = _parse_id_list(match.group("tagids"))
-            desc_ids = _parse_id_list(match.group("descids"))
+
+            name = re.sub(r"\s+", " ", title_match.group("name")).strip()
+            tagids_match = ROW_TAGIDS_RE.search(attrs)
+            descids_match = ROW_DESCIDS_RE.search(attrs)
+            tag_ids = _parse_id_list(tagids_match.group("tagids") if tagids_match else None)
+            desc_ids = _parse_id_list(descids_match.group("descids") if descids_match else None)
             tags = build_display_tags(tag_ids, desc_ids, tag_names)
+
+            original_match = ROW_ORIGINAL_TEXT_RE.search(body)
+            original_text = original_match.group("original").strip() if original_match else ""
+            final_price_match = ROW_FINAL_PRICE_RE.search(body)
+            if final_price_match:
+                final_price = int(final_price_match.group("final"))
+            else:
+                final_text_match = ROW_FINAL_TEXT_RE.search(body)
+                final_text = final_text_match.group("final_text").strip() if final_text_match else ""
+                final_price = self._price_text_to_int(final_text)
+
             deals.append(
                 SteamDeal(
                     app_id=app_id,
                     name=name,
-                    discount_percent=int(match.group("discount")),
+                    discount_percent=int(discount_match.group("discount")),
                     original_price=self._price_text_to_int(original_text),
-                    final_price=int(match.group("final")),
+                    final_price=final_price,
                     currency="KRW" if "₩" in original_text else self.cc.upper(),
                     image_url=(
                         f"https://shared.fastly.steamstatic.com/store_item_assets/"
@@ -372,17 +395,16 @@ class SteamStoreClient:
         )
 
         merged: Dict[int, SteamDeal] = {}
-        for deal in featured + searched:
+        for deal in searched:
+            if deal.discount_percent >= min_discount:
+                merged[deal.app_id] = deal
+        for deal in featured:
             if deal.discount_percent < min_discount:
                 continue
             current = merged.get(deal.app_id)
-            if current is None or deal.discount_percent > current.discount_percent:
+            if current is None:
                 merged[deal.app_id] = deal
-            elif (
-                deal.discount_percent == current.discount_percent
-                and deal.tags
-                and not current.tags
-            ):
+            elif deal.discount_percent > current.discount_percent:
                 merged[deal.app_id] = deal
 
         deals = list(merged.values())
