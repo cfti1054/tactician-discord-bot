@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 
 from activity_tracker import setup_activity_tracker
 from steam import setup_steam_deals
+from team import setup_team_formation
 from tft import setup_tft_digest
 
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -210,6 +211,7 @@ async def setup_hook():
     await setup_activity_tracker(bot, guild_id=GUILD_ID)
     await setup_tft_digest(bot, guild_id=GUILD_ID)
     await setup_steam_deals(bot, guild_id=GUILD_ID)
+    await setup_team_formation(bot, guild_id=GUILD_ID)
 
 
 bot.setup_hook = setup_hook

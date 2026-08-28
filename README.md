@@ -18,7 +18,7 @@ cp data/config.example.json data/config.json
 cp data/activity.example.json data/activity.json
 ```
 
-TFT 패치 알림 상태 파일은 봇이 `data/tft_digest.json`을 자동 생성합니다. Railway Volume을 쓰면 `TFT_DIGEST_FILE=/data/tft_digest.json`으로 경로를 바꿀 수 있습니다.
+TFT 패치 알림 상태 파일은 봇이 `data/tft_digest.json`을 자동 생성합니다. Steam 할인 알림은 `data/steam_digest.json`을 사용합니다. Railway Volume을 쓰면 `TFT_DIGEST_FILE`, `STEAM_DIGEST_FILE` 등으로 경로를 바꿀 수 있습니다.
 
 3. Edit `.env` and set:
 
@@ -45,6 +45,32 @@ Bot only:
 ```bash
 python src/bot.py
 ```
+
+## 기본 명령
+
+| 명령 | 설명 | 권한 |
+|------|------|------|
+| `/ping` | 봇 생존 확인 | 모두 |
+| `/공지설정` | 공지 채널 지정 | 모두 |
+| `/공지` | 모달로 공지 임베드 게시 | 모두 |
+| `/멤버목록` | 멤버목록 채널에 서버 멤버·CSV 버튼 게시 | 서버 관리 |
+| `/채팅삭제` | 채널 최근 메시지 삭제 (1~100개) | 메시지 관리 |
+| `/출석조회` | 멤버 출석·활동 요약 | 서버 관리 |
+| `/활동통계` | 서버 전체 활동 CSV | 서버 관리 |
+
+## 팀 정하기
+
+`/팀정하기`로 채널에 인터랙티브 UI를 띄워 팀 구성과 참가 멤버를 선택한 뒤 랜덤으로 팀을 나눕니다. **일반 서버 멤버 누구나** 사용할 수 있습니다.
+
+| 기능 | 설명 |
+|------|------|
+| 팀 구성 버튼 | `2:2`, `3:3`, `4:4`, `5:5`, `2:2:2:2` |
+| 직접입력 | Modal에서 `3:3:2` 등 자유 형식 입력 |
+| 멤버 선택 | 서버 멤버 버튼 토글 (봇 계정 제외) |
+| 팀 나누기 | 선택 인원 = 구성 합계일 때 랜덤 배정 |
+| 결과 | A/B/…팀 Embed, **다시 섞기**·**멤버 수정** |
+
+멤버가 많으면 페이지(14명/페이지)로 넘깁니다. 세션은 30분 후 만료됩니다.
 
 ## TFT 패치·소식 (AI 없음)
 
