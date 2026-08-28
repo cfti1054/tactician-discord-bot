@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import random
 from typing import List, Optional, Set, Tuple
 
@@ -18,9 +19,9 @@ FORMAT_PRESETS: List[Tuple[str, List[int]]] = [
 MEMBERS_PER_PAGE = 14
 FORMAT_PRESET_ROW = 0
 FORMAT_CUSTOM_ROW = 1
-MEMBER_ROWS = (1, 2, 3)
-CONTROL_ROW = 4
+MEMBER_ROW_START = 2
 MEMBERS_ON_FIRST_ROW = 4
+MEMBER_FETCH_TIMEOUT = 30.0
 VIEW_TIMEOUT = 1800.0
 MAX_BUTTON_LABEL = 15
 
@@ -60,11 +61,14 @@ def split_teams(member_ids: List[int], sizes: List[int]) -> List[List[int]]:
     return teams
 
 
-def get_human_members(guild: discord.Guild) -> List[discord.Member]:
-    return sorted(
-        (member for member in guild.members if not member.bot),
-        key=lambda member: member.display_name.lower(),
-    )
+async def fetch_human_members(guild: discord.Guild) -> List[discord.Member]:
+    members = [
+        member
+        async for member in guild.fetch_members(limit=None)
+        if not member.bot
+    ]
+    members.sort(key=lambda member: member.display_name.lower())
+    return members
 
 
 class CustomFormatModal(discord.ui.Modal, title="팀 구성 직접 입력"):
@@ -165,7 +169,7 @@ class TeamFormationView(discord.ui.View):
             if offset < MEMBERS_ON_FIRST_ROW:
                 row = FORMAT_CUSTOM_ROW
             else:
-                row = MEMBER_ROWS[(offset - MEMBERS_ON_FIRST_ROW) // 5]
+                row = MEMBER_ROW_START + (offset - MEMBERS_ON_FIRST_ROW) // 5
             selected = member.id in self.selected_ids
             button = discord.ui.Button(
                 label=truncate_label(member.display_name),
@@ -181,7 +185,7 @@ class TeamFormationView(discord.ui.View):
             label="◀ 이전",
             style=discord.ButtonStyle.secondary,
             custom_id="team_page_prev",
-            row=CONTROL_ROW,
+            row=4,
             disabled=self.page <= 0,
         )
         prev_button.callback = self._prev_page_callback
@@ -191,7 +195,7 @@ class TeamFormationView(discord.ui.View):
             label="다음 ▶",
             style=discord.ButtonStyle.secondary,
             custom_id="team_page_next",
-            row=CONTROL_ROW,
+            row=4,
             disabled=self.page >= self.total_pages - 1,
         )
         next_button.callback = self._next_page_callback
@@ -201,7 +205,7 @@ class TeamFormationView(discord.ui.View):
             label="전체선택",
             style=discord.ButtonStyle.secondary,
             custom_id="team_select_all",
-            row=CONTROL_ROW,
+            row=4,
         )
         select_all_button.callback = self._select_all_callback
         self.add_item(select_all_button)
@@ -211,7 +215,7 @@ class TeamFormationView(discord.ui.View):
             emoji="🎲",
             style=discord.ButtonStyle.primary,
             custom_id="team_split",
-            row=CONTROL_ROW,
+            row=4,
         )
         split_button.callback = self._split_callback
         self.add_item(split_button)
@@ -221,7 +225,7 @@ class TeamFormationView(discord.ui.View):
             emoji="🔄",
             style=discord.ButtonStyle.danger,
             custom_id="team_reset",
-            row=CONTROL_ROW,
+            row=4,
         )
         reset_button.callback = self._reset_callback
         self.add_item(reset_button)
@@ -457,10 +461,25 @@ class TeamFormation(commands.Cog):
 
         await interaction.response.defer()
 
-        if not interaction.guild.chunked:
-            await interaction.guild.chunk()
+        try:
+            members = await asyncio.wait_for(
+                fetch_human_members(interaction.guild),
+                timeout=MEMBER_FETCH_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            await interaction.followup.send(
+                "❌ 멤버 목록을 불러오는 데 시간이 너무 오래 걸립니다.\n"
+                "잠시 후 다시 시도해주세요.",
+                ephemeral=True,
+            )
+            return
+        except discord.HTTPException as exc:
+            await interaction.followup.send(
+                f"❌ 멤버 목록을 불러오지 못했습니다.\n`{exc}`",
+                ephemeral=True,
+            )
+            return
 
-        members = get_human_members(interaction.guild)
         if not members:
             await interaction.followup.send(
                 "❌ 선택 가능한 멤버가 없습니다.",
@@ -481,7 +500,13 @@ class TeamFormation(commands.Cog):
             host=host,
             members=members,
         )
-        await interaction.followup.send(
-            embed=view.build_embed(),
-            view=view,
-        )
+        try:
+            await interaction.followup.send(
+                embed=view.build_embed(),
+                view=view,
+            )
+        except discord.HTTPException as exc:
+            await interaction.followup.send(
+                f"❌ 팀 정하기 UI를 표시하지 못했습니다.\n`{exc}`",
+                ephemeral=True,
+            )
