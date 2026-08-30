@@ -9,6 +9,7 @@ from discord.ext import commands
 from dotenv import load_dotenv
 
 from activity_tracker import setup_activity_tracker
+from command_toggles import setup_command_toggles
 from steam import setup_steam_deals
 from team import setup_team_formation
 from tft import setup_tft_digest
@@ -24,7 +25,10 @@ if not TOKEN:
 
 GUILD_ID = os.getenv("GUILD_ID")
 
-CONFIG_FILE = os.path.join(PROJECT_ROOT, "data", "config.json")
+CONFIG_FILE = os.getenv(
+    "CONFIG_FILE",
+    os.path.join(PROJECT_ROOT, "data", "config.json"),
+)
 
 NOTICE_CHANNEL_ID = None
 NOTICE_CHANNEL_NAME = None
@@ -46,17 +50,23 @@ def load_config():
     MEMBER_LIST_CHANNEL_ID = config.get("member_list_channel")
 
 def save_config():
+    existing = {}
+    if os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            loaded = json.load(f)
+            if isinstance(loaded, dict):
+                existing = loaded
+
+    existing.update(
+        {
+            "notice_channel": NOTICE_CHANNEL_ID,
+            "notice_channel_name": NOTICE_CHANNEL_NAME,
+            "member_list_channel": MEMBER_LIST_CHANNEL_ID,
+        }
+    )
+    os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(
-            {
-                "notice_channel": NOTICE_CHANNEL_ID,
-                "notice_channel_name": NOTICE_CHANNEL_NAME,
-                "member_list_channel": MEMBER_LIST_CHANNEL_ID,
-            },
-            f,
-            indent=4,
-            ensure_ascii=False
-        )
+        json.dump(existing, f, indent=4, ensure_ascii=False)
 
 
 def build_member_rows(members: List[discord.Member]) -> Tuple[List[tuple], List[str]]:
@@ -208,6 +218,7 @@ bot = commands.Bot(
 
 
 async def setup_hook():
+    setup_command_toggles(bot, CONFIG_FILE)
     await setup_activity_tracker(bot, guild_id=GUILD_ID)
     await setup_tft_digest(bot, guild_id=GUILD_ID)
     await setup_steam_deals(bot, guild_id=GUILD_ID)

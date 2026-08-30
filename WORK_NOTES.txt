@@ -1,15 +1,27 @@
 ================================================================================
   tactician-discord-bot 작업 정리
-  최종 수정: 2026-08-28
+  최종 수정: 2026-08-30
 ================================================================================
 
 ■ Git 커밋 기록
 --------------------------------------------------------------------------------
   (최신 항목이 위)
 
-  [미커밋] 2026-08-28
-  /팀정하기 명령 추가 — 프리셋·직접입력·멤버 버튼 토글·랜덤 팀 배정
-  src/team/ 모듈, bot.py cog 등록, README·WORK_NOTES 갱신
+  [미커밋] 2026-08-30
+  /명령설정 추가 — 역할별 슬래시 명령 사용 제한 (Modal)
+  /팀정하기 UI 개선 — Embed 3구역·String Select(봇 제외)·페이지네이션
+  CONFIG_FILE 환경 변수, config.json command_roles 필드 추가
+  discord.py>=2.7.0 (모달 RoleSelect·Label 지원)
+  README·WORK_NOTES 갱신
+
+  [41d0ef5] 2026-08-30
+  TFT·Steam 알림설정·채팅삭제 명령 일반 유저 사용 허용 (이후 revert)
+
+  [46d97e4] 2026-08-28
+  /팀정하기 UI 오류 수정 — fetch_members 로드, 버튼 row 배치
+
+  [e5dea56] 2026-08-28
+  /팀정하기 명령 추가 — 프리셋·직접입력·멤버 선택·랜덤 팀 배정
 
   [a0e1255] 2026-08-24
   Steam 할인 검색 HTML 파싱 오류로 잘못된 가격 표시 수정
@@ -17,27 +29,12 @@
   [7881e50] 2026-08-22
   TFT·Steam 자동 알림 및 /채팅삭제 명령 추가
 
-  [8910baa] 2026-08-18
-  Railway 빌드용 requirements.txt 의존성 직접 명시
-
-  [82c2646] 2026-08-18
-  Railway 빌드용 루트 requirements.txt 추가
-
-  [7bce915] 2026-08-18
-  REST API 추가 (FastAPI). 봇+API 동시 실행(src/main.py)
-
-  [ed7c4d0] 2026-08-18
-  src·data 폴더 구조로 프로젝트 정리
-
-  [b933de1] 2026-08-11
-  슬래시 명령·공지·멤버목록·활동집계 모듈 추가
-
   [1854c2f] 저장소 초기 생성
 
 
 ■ 1. 프로젝트 개요
 --------------------------------------------------------------------------------
-Python + discord.py 기반 Discord 봇 + FastAPI REST API.
+Python + discord.py 2.7+ 기반 Discord 봇 + FastAPI REST API.
 
 봇 이름   : Tactician Bot
 실행 방법 :
@@ -45,9 +42,11 @@ Python + discord.py 기반 Discord 봇 + FastAPI REST API.
   python src/bot.py    봇만 실행
 주요 기능 :
   · 슬래시 명령 (아래 §6 전체 목록)
+  · /명령설정 — 역할별 명령 사용 제한 (Modal)
   · 공지 채널 설정 + Modal로 공지 임베드 게시
   · 멤버목록 채널 자동 생성·게시 + CSV 다운로드 버튼
-  · /팀정하기 — 팀 구성 선택·멤버 버튼 토글·랜덤 팀 배정
+  · /팀정하기 — 팀 구성·멤버 선택·랜덤 팀 배정 (봇 제외)
+  · /채팅삭제 — 채널 메시지 일괄 삭제
   · 음성/메시지 활동 집계 (KST 일별) → activity.json 저장
   · 공식 TFT 패치·소식 수집 후 규칙 기반 요약 → Discord 알림
   · Steam 스토어 할인 게임 수집 → Discord 알림
@@ -60,6 +59,7 @@ tactician-discord-bot/
 ├── src/
 │   ├── main.py              # 봇 + FastAPI 동시 실행
 │   ├── bot.py               # Discord 봇: 공지·멤버목록·슬래시 동기화
+│   ├── command_toggles.py   # /명령설정 — 역할별 명령 사용 (Modal)
 │   ├── activity_tracker.py  # Cog: 활동 집계·출석조회·CSV 내보내기
 │   ├── team/                # 팀 정하기
 │   │   ├── __init__.py      # setup_team_formation
@@ -84,7 +84,7 @@ tactician-discord-bot/
 │   │       └── attendance.py
 │   └── requirements.txt
 ├── data/                    # JSON 설정·데이터
-│   ├── config.json          # 공지/멤버목록 채널 ID (로컬, 커밋 금지)
+│   ├── config.json          # 공지·멤버목록·command_roles (로컬, 커밋 금지)
 │   ├── config.example.json
 │   ├── activity.json        # 활동 집계 데이터 (로컬, 커밋 금지)
 │   ├── activity.example.json
@@ -98,15 +98,15 @@ tactician-discord-bot/
 └── Image/
 
   .env는 프로젝트 루트, JSON은 data/ 폴더에 둡니다.
-  src/ 코드는 위 경로를 기준으로 읽고 씁니다.
+  CONFIG_FILE 환경 변수로 config.json 경로를 변경할 수 있습니다.
 
 
 ■ 3. 설치 패키지
 --------------------------------------------------------------------------------
-  discord.py      Discord API 연동
-  python-dotenv   .env 환경 변수 로드
-  fastapi         REST API
-  uvicorn         ASGI 서버
+  discord.py>=2.7.0   Discord API (Modal Label·RoleSelect·String Select)
+  python-dotenv     .env 환경 변수 로드
+  fastapi           REST API
+  uvicorn           ASGI 서버
 
   설치: pip install -r src/requirements.txt
   환경: Python 3.9+
@@ -116,7 +116,7 @@ tactician-discord-bot/
 --------------------------------------------------------------------------------
 [필수 Intent]
   Message Content Intent  — 메시지 수 집계(on_message)에 필요
-  Server Members Intent   — 멤버 목록·캐시·/팀정하기 멤버 버튼에 필요
+  Server Members Intent   — 멤버 목록·/팀정하기 멤버 Select에 필요
 
   위치: Applications → Bot → Privileged Gateway Intents
 
@@ -128,7 +128,6 @@ tactician-discord-bot/
     · 채널 관리 (멤버목록 채널 자동 생성)
     · 메시지 관리 (/채팅삭제)
     · 서버 관리 권한은 슬래시 default_permissions와 별개
-      (실제 사용 제한은 명령의 Manage Guild 기본 권한으로 걸림)
 
 [Bot Token]
   .env의 DISCORD_TOKEN에 저장. Git에 올리면 안 됩니다.
@@ -142,7 +141,8 @@ tactician-discord-bot/
                    설정 시 활동 집계·REST API·TFT/Steam/팀정하기도 그 서버만
   API_KEY        — (REST API 필수) Authorization: Bearer <API_KEY>
   PORT           — REST API 포트 (기본 8000, Railway는 자동 주입)
-  ACTIVITY_FILE  — (선택) 활동 JSON 경로. Railway Volume 예: /data/activity.json
+  CONFIG_FILE    — (선택) config.json 경로. Volume 예: /data/config.json
+  ACTIVITY_FILE  — (선택) 활동 JSON 경로. Volume 예: /data/activity.json
   TFT_DIGEST_FILE — (선택) TFT 알림 상태 JSON. Volume 예: /data/tft_digest.json
   TFT_POLL_MINUTES — (선택) TFT 확인 주기(분). 기본 30
   STEAM_DIGEST_FILE — (선택) Steam 알림 상태 JSON. Volume 예: /data/steam_digest.json
@@ -151,9 +151,17 @@ tactician-discord-bot/
   STEAM_CC / STEAM_LANG — (선택) Steam 스토어 지역/언어. 기본 kr / korean
   STEAM_SEARCH_COUNT — (선택) Steam 검색 할인 게임 수. 기본 100
 
-  설정:
+  Railway Volume (재배포 후 설정 유지):
+    Mount Path: /data
+    Variables:
+      CONFIG_FILE=/data/config.json
+      ACTIVITY_FILE=/data/activity.json
+      TFT_DIGEST_FILE=/data/tft_digest.json
+      STEAM_DIGEST_FILE=/data/steam_digest.json
+
+  로컬 설정:
     cp .env.example .env
-    cp data/config.example.json data/config.json   # 필요 시
+    cp data/config.example.json data/config.json
     cp data/activity.example.json data/activity.json
 
 
@@ -161,13 +169,30 @@ tactician-discord-bot/
 --------------------------------------------------------------------------------
 [bot.py]
   /ping        — 생존 확인 (Pong!)
-  /공지설정    — 공지 올릴 텍스트 채널 지정 → data/config.json 저장
+  /공지설정    — 공지 올릴 텍스트 채널 지정 → config.json 저장
   /공지        — Modal(제목·내용)로 공지 임베드 게시
   /멤버목록    — Manage Guild 필요
                  "멤버목록" 채널 찾거나 생성 후 목록 게시
                  CSV 다운로드 버튼(1시간)
   /채팅삭제    — Manage Messages 필요
                  텍스트 채널 최근 메시지 1~100개 삭제 (14일 이내만 일괄 삭제 가능)
+                 봇에 해당 채널 메시지 관리 권한 필요
+
+[command_toggles.py]
+  /명령설정    — Manage Guild 필요
+                 Modal에서 명령 + 역할 선택 (둘 다 여러 개 동시 선택 가능)
+                 여러 역할 지정 시 그중 하나만 있어도 명령 사용 가능
+                 서버 관리자는 역할 제한과 관계없이 모든 명령 사용 가능
+                 "역할 추가" — 기존 역할에 누적 / "다시 설정" — 목록 교체
+                 역할 비우고 저장 → 해당 명령 전체 허용
+                 /명령설정 자체는 제한 불가
+                 저장: config.json → command_roles
+                   예: { "팀정하기": [123456789, 987654321] }
+
+  관리 대상 명령 (13개):
+    ping, 공지설정, 공지, 멤버목록, 채팅삭제, 팀정하기,
+    tft알림설정, tft패치, tft소식, 스팀알림설정, 스팀할인,
+    출석조회, 활동통계
 
 [activity_tracker.py]
   /출석조회    — Manage Guild 필요
@@ -176,9 +201,10 @@ tactician-discord-bot/
                  서버 전체 활동 CSV ephemeral 첨부
 
 [team/cog.py]
-  /팀정하기    — 권한 제한 없음 (일반 멤버 사용 가능)
+  /팀정하기    — 권한 제한 없음 (일반 멤버 사용 가능, /명령설정으로 역할 제한 가능)
+                 Embed 3구역(팀 구성 / 멤버 선택 / 실행) + 버튼 row 분리
                  팀 구성 버튼(2:2, 3:3, 4:4, 5:5, 2:2:2:2) + Modal 직접입력
-                 서버 멤버 버튼 토글(봇 제외), 페이지당 14명
+                 멤버 String Select (봇 제외, 페이지당 25명)
                  인원 일치 시 랜덤 팀 배정, 다시 섞기·멤버 수정
                  View 세션 30분 후 만료
 
@@ -192,20 +218,49 @@ tactician-discord-bot/
   /스팀할인    — 할인 게임 목록 조회 (페이지 버튼)
 
 
-■ 7. 팀 정하기 (team)
+■ 7. 명령 역할 설정 (command_toggles)
+--------------------------------------------------------------------------------
+모듈: src/command_toggles.py
+
+동작:
+  · bot.tree.interaction_check — 모든 슬래시 명령 실행 전 역할 검사
+  · command_roles에 역할 ID 목록이 있으면, 해당 역할(OR) 보유자만 사용
+  · manage_guild 권한자는 항상 통과
+  · 역할 미지정(빈 목록) → 모든 멤버 사용 가능
+
+UI:
+  · /명령설정 → Modal (명령 String Select + 역할 RoleSelect)
+  · 저장 후 Embed 요약 + "다시 설정" / "역할 추가" 버튼
+
+config.json 예시:
+  {
+    "notice_channel": 123,
+    "notice_channel_name": "공지",
+    "member_list_channel": 456,
+    "command_roles": {
+      "팀정하기": [111, 222],
+      "tft패치": [111]
+    }
+  }
+
+
+■ 8. 팀 정하기 (team)
 --------------------------------------------------------------------------------
 모듈: src/team/cog.py
 
-UI 구성 (Discord 메시지 + Button View, Modal은 직접입력만):
-  Row 0: 2:2 | 3:3 | 4:4 | 5:5 | 2:2:2:2
-  Row 1: ✏️ 직접입력 + 멤버 4명
-  Row 2~3: 멤버 5명씩
-  Row 4: ◀ 이전 | 다음 ▶ | 전체선택 | 🎲 팀 나누기 | 🔄 초기화
+UI 구성:
+  Row 0: 2:2 | 3:3 | 4:4 | 5:5 | 2:2:2:2        ← 1️⃣ 팀 구성
+  Row 1: ✏️ 직접입력                              ← 1️⃣ 팀 구성
+  Row 2: 👥 String Select (봇 제외 멤버만)        ← 2️⃣ 멤버 선택
+  Row 3: ◀ 멤버 이전 | 멤버 다음 ▶ (25명 초과 시)
+  Row 4: 🎲 팀 나누기 | 선택 해제 | 🔄 초기화     ← 3️⃣ 실행
+  Embed: 1️⃣ 팀 구성 / 2️⃣ 멤버 선택 / 3️⃣ 실행 안내
 
 멤버 목록:
-  · guild.members 중 bot=False 만 표시
-  · display_name 가나다순 정렬
-  · GUILD_ID 서버에서 guild.chunk() 후 캐시 사용
+  · guild.fetch_members() 후 bot=False 만 Select 옵션에 포함
+  · UserSelect는 Discord API상 봇 필터 불가 → String Select 사용
+  · display_name 가나다순 정렬, 페이지당 25명
+  · 다른 페이지에서 선택한 멤버는 유지 (페이지별 merge)
 
 팀 배정:
   · parse_team_format("3:3:2") → [3, 3, 2]
@@ -214,12 +269,12 @@ UI 구성 (Discord 메시지 + Button View, Modal은 직접입력만):
   · 결과 Embed + TeamResultView (다시 섞기 / 멤버 수정)
 
 제한:
-  · 메시지당 버튼 최대 25개 (Discord API)
-  · 버튼 라벨 15자 초과 시 말줄임
+  · String Select 옵션 최대 25개/페이지 (Discord API)
   · VIEW_TIMEOUT = 1800초 (30분)
+  · MEMBER_FETCH_TIMEOUT = 30초
 
 
-■ 8. 활동 집계 (activity_tracker)
+■ 9. 활동 집계 (activity_tracker)
 --------------------------------------------------------------------------------
 저장 파일 : data/activity.json (KST Asia/Seoul 기준 일별)
             ACTIVITY_FILE 환경 변수로 경로 변경 가능
@@ -234,28 +289,12 @@ UI 구성 (Discord 메시지 + Button View, Modal은 직접입력만):
   attended  — 해당 날짜에 위 항목 중 하나라도 > 0
   qualified — voice_seconds >= min_voice_seconds (API 쿼리, 기본 0)
 
-데이터 형태(요약):
-  {
-    "<guild_id>": {
-      "_guild_name": "...",
-      "<user_id>": {
-        "_user_name": "...",
-        "YYYY-MM-DD": {
-          "voice_joins": 0,
-          "voice_seconds": 0,
-          "voice_messages": 0,
-          "messages": 0
-        }
-      }
-    }
-  }
-
 봇 재시작 시:
   이미 음성에 있는 멤버는 on_ready에서 세션만 동기화
   (재시작 직전 구간 초는 누락될 수 있음)
 
 
-■ 9. TFT 패치·소식 (tft)
+■ 10. TFT 패치·소식 (tft)
 --------------------------------------------------------------------------------
 공식 사이트 HTML(__NEXT_DATA__) 파싱. OpenAI 등 유료 API 미사용.
 
@@ -267,7 +306,7 @@ UI 구성 (Discord 메시지 + Button View, Modal은 직접입력만):
 처음 채널 설정 시 최신 패치 1건 게시, 이후 새 글만 알림.
 
 
-■ 10. Steam 할인 (steam)
+■ 11. Steam 할인 (steam)
 --------------------------------------------------------------------------------
 Steam Store 검색/태그 HTML 파싱. 한국 스토어(kr) 가격 기준. API 키 불필요.
 
@@ -278,99 +317,72 @@ Steam Store 검색/태그 HTML 파싱. 한국 스토어(kr) 가격 기준. API �
 시즌 세일 시작 시 별도 공지 1회, 세일 기간 중 개별 할인 알림 일시 중단.
 
 
-■ 11. REST API
+■ 12. REST API
 --------------------------------------------------------------------------------
 실행: python src/main.py  (discord.py 봇과 uvicorn을 같은 프로세스에서 실행)
 문서: http://localhost:8000/docs
 
   GET /health
-    인증 없음. Railway 헬스체크용.
-
   GET /api/v1/guilds/{guild_id}/attendance-report
-    Query: from, to (YYYY-MM-DD, KST), min_voice_seconds (기본 0)
-    기간 내 활동이 있는 멤버 + 일별 상세(attended/qualified)
-
   GET /api/v1/guilds/{guild_id}/members/summary
-    위와 동일, 일별 배열 없음 (대시보드·포인트 배치용)
-
   GET /api/v1/guilds/{guild_id}/members/{user_id}
-    특정 멤버 기간 상세. 데이터 없으면 404.
 
 인증: Authorization: Bearer <API_KEY>
 GUILD_ID가 설정되어 있으면 다른 guild_id 요청은 403.
 
-포인트 계산은 API에 포함하지 않음. 외부에서 qualified_days 등을 사용.
 
-
-■ 12. bot.py / 모듈 구조
+■ 13. bot.py / 모듈 구조
 --------------------------------------------------------------------------------
 main.py
   load_dotenv() → bot.start() + uvicorn.Server.serve() 병렬 실행
-  Railway는 PORT를 listen 해야 Public URL이 동작함
 
 bot.py
-  load_dotenv() → TOKEN / GUILD_ID
-  data/config.json 로드·저장 (공지·멤버목록 채널)
-  setup_hook → ActivityTracker + TftDigest + SteamDeals + TeamFormation Cog
-  on_ready
-    · 슬래시 sync (guild 또는 global)
-    · GUILD_ID 있으면 guild.chunk()로 멤버 캐시
-    · 설정된 채널 상태 로그
+  CONFIG_FILE 환경 변수 → config.json 경로
+  setup_hook → setup_command_toggles + ActivityTracker + TftDigest
+               + SteamDeals + TeamFormation
+  on_ready → 슬래시 sync, guild.chunk(), 채널 상태 로그
   슬래시: ping / 공지설정 / 공지 / 멤버목록 / 채팅삭제
-  python src/bot.py 로 단독 실행 가능
+  (/명령설정은 command_toggles.py에서 등록)
 
-activity_tracker.py
-  ActivityStore  — JSON 읽기/쓰기·기간 집계
-  ActivityTracker Cog
-    · on_voice_state_update / on_message
-    · /출석조회, /활동통계
-  setup_activity_tracker(bot, guild_id)
+command_toggles.py
+  CommandRoleStore — command_roles load/save
+  CommandRoleModal — Modal (명령 Select + 역할 RoleSelect)
+  interaction_check — 역할 기반 명령 차단
 
-team/
-  TeamFormation Cog — /팀정하기
-  setup_team_formation(bot, guild_id)
-
-tft/ / steam/
-  각각 setup_tft_digest, setup_steam_deals
-
-api/
-  FastAPI가 bot.get_cog("ActivityTracker").store 를 공유해서 읽기
+team/ — TeamFormation Cog (/팀정하기)
+tft/  — setup_tft_digest
+steam/ — setup_steam_deals
+api/  — FastAPI, ActivityStore 공유
 
 
-■ 13. 발생했던 오류 / 주의
+■ 14. 발생했던 오류 / 주의
 --------------------------------------------------------------------------------
-  ValueError: DISCORD_TOKEN 미설정
+  DISCORD_TOKEN 미설정
   → .env 없거나 DISCORD_TOKEN 비어 있음
-  → cp .env.example .env 후 토큰 입력
 
   PrivilegedIntentsRequired
   → Message Content / Server Members Intent 미활성화
-  → Developer Portal에서 ON 후 재실행
 
   슬래시 명령이 안 보임
   → GUILD_ID 설정 후 재시작(즉시 sync) 권장
-  → 전역 sync는 최대 약 1시간 소요
-  → 초대 시 applications.commands 스코프 포함 여부 확인
 
-  /팀정하기 멤버 버튼이 비어 있음
-  → Server Members Intent 미활성화 또는 멤버 캐시 미로드
-  → GUILD_ID 설정 후 on_ready에서 guild.chunk() 확인
+  /팀정하기 멤버 목록이 비어 있음
+  → Server Members Intent 미활성화
+  → fetch_members 타임아웃(30초) — 멤버 많은 서버는 재시도
 
-  REST API 401
-  → Authorization: Bearer <API_KEY> 누락 또는 API_KEY 불일치
-
-  REST API 503 API_KEY 미설정
-  → Railway Variables / .env 에 API_KEY 추가
-
-  Railway 재배포 후 activity.json 초기화
-  → 컨테이너 파일시스템은 휘발성. Volume을 /data 에 달고
-    ACTIVITY_FILE=/data/activity.json 설정
+  Railway 재배포 후 설정·알림 채널 초기화
+  → 컨테이너 파일시스템은 휘발성
+  → Volume /data + CONFIG_FILE, TFT_DIGEST_FILE, STEAM_DIGEST_FILE 설정
+  → Volume 연결 후 채널 재설정 1회 필요
 
   /채팅삭제 14일 초과 메시지
   → Discord API 제한으로 14일 지난 메시지는 bulk purge 불가
 
+  REST API 401 / 503
+  → API_KEY 누락 또는 불일치
 
-■ 14. Git 보안
+
+■ 15. Git 보안
 --------------------------------------------------------------------------------
   커밋 금지: .env, data/config.json, data/activity.json,
              data/tft_digest.json, data/steam_digest.json,
@@ -378,13 +390,8 @@ api/
   커밋 가능: .env.example, data/*.example.json, .gitignore,
              src/, README.md, WORK_NOTES.txt
 
-  로컬 설정 복사:
-    cp .env.example .env
-    cp data/config.example.json data/config.json
-    cp data/activity.example.json data/activity.json
 
-
-■ 15. 실행 순서
+■ 16. 실행 순서
 --------------------------------------------------------------------------------
   1. pip install -r src/requirements.txt
   2. .env에 DISCORD_TOKEN, API_KEY (및 선택 GUILD_ID) 설정
@@ -392,13 +399,12 @@ api/
   4. bot + applications.commands 로 서버 초대
   5. python src/main.py
   6. Railway: Start Command = python src/main.py
-     Public Networking ON, 변수에 DISCORD_TOKEN / API_KEY / GUILD_ID
+     Volume /data + CONFIG_FILE 등 Variables 설정
 
 
-■ 16. 참고 링크
+■ 17. 참고 링크
 --------------------------------------------------------------------------------
   Discord Developer Portal : https://discord.com/developers/applications
-  Discord API 문서         : https://discord.com/developers/docs/intro
   discord.py 문서          : https://discordpy.readthedocs.io/
   FastAPI 문서             : https://fastapi.tiangolo.com/
   TFT 공식 패치 노트       : https://teamfighttactics.leagueoflegends.com/ko-kr/news/tags/patch-notes/

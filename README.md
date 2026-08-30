@@ -4,7 +4,7 @@ Python + discord.py Discord bot, with a REST API for member activity and attenda
 
 ## Setup
 
-1. Install dependencies:
+1. Install dependencies (discord.py **2.7+** required — 모달 역할 선택·팀 멤버 Select 등):
 
 ```bash
 pip install -r src/requirements.txt
@@ -18,7 +18,7 @@ cp data/config.example.json data/config.json
 cp data/activity.example.json data/activity.json
 ```
 
-TFT 패치 알림 상태 파일은 봇이 `data/tft_digest.json`을 자동 생성합니다. Steam 할인 알림은 `data/steam_digest.json`을 사용합니다. Railway Volume을 쓰면 `TFT_DIGEST_FILE`, `STEAM_DIGEST_FILE` 등으로 경로를 바꿀 수 있습니다.
+TFT·Steam 알림 상태 파일(`tft_digest.json`, `steam_digest.json`)은 봇이 자동 생성합니다.
 
 3. Edit `.env` and set:
 
@@ -26,6 +26,8 @@ TFT 패치 알림 상태 파일은 봇이 `data/tft_digest.json`을 자동 생�
 - `GUILD_ID` — optional (faster slash-command sync; also limits REST API access to that server)
 - `API_KEY` — required for REST API (`Authorization: Bearer <API_KEY>`)
 - `PORT` — REST API port (default `8000`; Railway injects this automatically)
+- `CONFIG_FILE` — optional (공지·멤버목록·명령 역할 설정 JSON 경로)
+- `ACTIVITY_FILE`, `TFT_DIGEST_FILE`, `STEAM_DIGEST_FILE` — optional (데이터 파일 경로)
 
 4. In [Discord Developer Portal](https://discord.com/developers/applications) → Bot, enable:
 
@@ -46,6 +48,19 @@ Bot only:
 python src/bot.py
 ```
 
+### Railway Volume (재배포 후 설정 유지)
+
+컨테이너 디스크는 휘발성입니다. Volume을 `/data`에 마운트한 뒤 Variables에 아래를 설정하세요.
+
+```env
+CONFIG_FILE=/data/config.json
+ACTIVITY_FILE=/data/activity.json
+TFT_DIGEST_FILE=/data/tft_digest.json
+STEAM_DIGEST_FILE=/data/steam_digest.json
+```
+
+Volume 연결 후 **한 번 재배포**하고, TFT·Steam 알림 채널은 Discord에서 다시 설정해야 합니다.
+
 ## 기본 명령
 
 | 명령 | 설명 | 권한 |
@@ -57,20 +72,44 @@ python src/bot.py
 | `/채팅삭제` | 채널 최근 메시지 삭제 (1~100개) | 메시지 관리 |
 | `/출석조회` | 멤버 출석·활동 요약 | 서버 관리 |
 | `/활동통계` | 서버 전체 활동 CSV | 서버 관리 |
+| `/명령설정` | 슬래시 명령별 사용 가능 역할 지정 | 서버 관리 |
+
+## 명령 역할 설정
+
+`/명령설정`으로 슬래시 명령마다 **사용 가능한 Discord 역할**을 지정합니다. 팝업(Modal)에서 설정합니다.
+
+| 기능 | 설명 |
+|------|------|
+| 명령 선택 | `/ping`, `/팀정하기`, `/tft패치` 등 **여러 명령 동시 선택** |
+| 역할 선택 | **여러 역할 동시 선택** (지정된 역할 중 하나만 있어도 사용 가능) |
+| 역할 추가 | 기존 역할에 새 역할을 **누적** |
+| 다시 설정 | 선택한 역할 목록으로 **교체** |
+| 제한 해제 | 역할을 비우고 저장하면 **모든 멤버** 사용 가능 |
+
+- `/명령설정` 자체는 서버 관리자만 사용할 수 있으며, 역할 제한 대상이 아닙니다.
+- 서버 관리자(`manage_guild`)는 역할 제한과 관계없이 모든 명령을 사용할 수 있습니다.
+- 설정은 `config.json`의 `command_roles`에 저장됩니다.
 
 ## 팀 정하기
 
 `/팀정하기`로 채널에 인터랙티브 UI를 띄워 팀 구성과 참가 멤버를 선택한 뒤 랜덤으로 팀을 나눕니다. **일반 서버 멤버 누구나** 사용할 수 있습니다.
 
+Embed와 버튼 row로 **3구역**이 구분됩니다.
+
+| 구역 | UI |
+|------|-----|
+| 1️⃣ 팀 구성 | `2:2`, `3:3`, `4:4`, `5:5`, `2:2:2:2` 버튼 + **직접입력** Modal |
+| 2️⃣ 멤버 선택 | String Select (봇 제외, 25명/페이지, 페이지 버튼) |
+| 3️⃣ 실행 | 🎲 팀 나누기 · 선택 해제 · 🔄 초기화 |
+
 | 기능 | 설명 |
 |------|------|
-| 팀 구성 버튼 | `2:2`, `3:3`, `4:4`, `5:5`, `2:2:2:2` |
 | 직접입력 | Modal에서 `3:3:2` 등 자유 형식 입력 |
-| 멤버 선택 | 서버 멤버 버튼 토글 (봇 계정 제외) |
+| 멤버 선택 | **봇 계정은 목록에 표시되지 않음** |
 | 팀 나누기 | 선택 인원 = 구성 합계일 때 랜덤 배정 |
 | 결과 | A/B/…팀 Embed, **다시 섞기**·**멤버 수정** |
 
-멤버가 많으면 페이지(14명/페이지)로 넘깁니다. 세션은 30분 후 만료됩니다.
+세션은 30분 후 만료됩니다.
 
 ## TFT 패치·소식 (AI 없음)
 
