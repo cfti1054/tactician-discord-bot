@@ -362,6 +362,7 @@ async def member_list(interaction: discord.Interaction):
     channel="삭제할 채널 (미입력 시 현재 채널)",
     pinned="고정(핀)된 메시지도 함께 삭제할지 여부",
 )
+@app_commands.default_permissions(manage_messages=True)
 async def clear_messages(
     interaction: discord.Interaction,
     count: app_commands.Range[int, 1, 100],

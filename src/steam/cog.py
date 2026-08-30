@@ -348,6 +348,7 @@ class SteamDeals(commands.Cog):
         channel="알림을 받을 텍스트 채널",
         min_discount="알림할 최소 할인율(%)",
     )
+    @app_commands.default_permissions(manage_guild=True)
     async def set_steam_channel(
         self,
         interaction: discord.Interaction,
