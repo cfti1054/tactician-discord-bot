@@ -312,7 +312,6 @@ class TftDigest(commands.Cog):
 
     @app_commands.command(name="tft알림설정", description="TFT 패치·소식 자동 알림 채널을 설정합니다.")
     @app_commands.describe(channel="알림을 받을 텍스트 채널")
-    @app_commands.default_permissions(manage_guild=True)
     async def set_tft_channel(
         self,
         interaction: discord.Interaction,
