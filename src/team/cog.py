@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import random
 from typing import List, Optional, Set, Tuple
 
@@ -19,21 +18,11 @@ FORMAT_PRESETS: List[Tuple[str, List[int]]] = [
 FORMAT_ROW = 0
 CUSTOM_ROW = 1
 MEMBER_SELECT_ROW = 2
-MEMBER_NAV_ROW = 3
 ACTION_ROW = 4
-MEMBERS_PER_PAGE = 25
-MEMBER_FETCH_TIMEOUT = 30.0
 VIEW_TIMEOUT = 1800.0
 MAX_MEMBER_SELECT = 25
-MAX_SELECT_LABEL = 100
 
 TEAM_EMOJIS = ("🔵", "🔴", "🟢", "🟡", "🟣", "🟠", "⚪", "🟤")
-
-
-def truncate_label(text: str, max_length: int = MAX_SELECT_LABEL) -> str:
-    if len(text) <= max_length:
-        return text
-    return text[: max_length - 1] + "…"
 
 
 def parse_team_format(text: str) -> Optional[List[int]]:
@@ -63,16 +52,6 @@ def split_teams(member_ids: List[int], sizes: List[int]) -> List[List[int]]:
     return teams
 
 
-async def fetch_human_members(guild: discord.Guild) -> List[discord.Member]:
-    members = [
-        member
-        async for member in guild.fetch_members(limit=None)
-        if not member.bot
-    ]
-    members.sort(key=lambda member: member.display_name.lower())
-    return members
-
-
 class CustomFormatModal(discord.ui.Modal, title="팀 구성 직접 입력"):
     format_input = discord.ui.TextInput(
         label="팀 구성",
@@ -94,6 +73,12 @@ class CustomFormatModal(discord.ui.Modal, title="팀 구성 직접 입력"):
                 ephemeral=True,
             )
             return
+        if sum(sizes) > MAX_MEMBER_SELECT:
+            await interaction.response.send_message(
+                f"❌ UserSelect에서는 최대 **{MAX_MEMBER_SELECT}명**까지 선택할 수 있습니다.",
+                ephemeral=True,
+            )
+            return
 
         self.parent_view.set_format(sizes, label=self.format_input.value.strip())
         self.parent_view.rebuild_items()
@@ -103,48 +88,48 @@ class CustomFormatModal(discord.ui.Modal, title="팀 구성 직접 입력"):
         )
 
 
-class MemberSelectMenu(discord.ui.Select):
+class MemberUserSelect(discord.ui.UserSelect):
     def __init__(self, parent_view: "TeamFormationView") -> None:
         self.parent_view = parent_view
-        page_members = parent_view.page_members()
-        options: List[discord.SelectOption] = []
-        for member in page_members:
-            options.append(
-                discord.SelectOption(
-                    label=truncate_label(member.display_name),
-                    value=str(member.id),
-                    description=truncate_label(member.name, 100),
-                    default=member.id in parent_view.selected_ids,
-                )
-            )
-
-        page_num = parent_view.member_page + 1
-        page_total = parent_view.total_member_pages
-        placeholder = (
-            f"👥 참가 멤버 선택 (봇 제외) · {page_num}/{page_total}페이지"
-            if page_members
-            else "선택 가능한 멤버가 없습니다"
-        )
+        default_values = [
+            discord.Object(id=member_id)
+            for member_id in sorted(parent_view.selected_ids)
+        ]
 
         super().__init__(
-            placeholder=placeholder,
+            placeholder="👥 참가 멤버를 검색해 선택하세요 (최대 25명)",
             min_values=0,
-            max_values=min(len(page_members), MAX_MEMBER_SELECT),
-            options=options,
+            max_values=MAX_MEMBER_SELECT,
+            default_values=default_values,
             row=MEMBER_SELECT_ROW,
-            disabled=not page_members,
         )
 
     async def callback(self, interaction: discord.Interaction) -> None:
-        page_member_ids = {member.id for member in self.parent_view.page_members()}
-        selected_on_page = {int(value) for value in self.values}
-        kept = self.parent_view.selected_ids - page_member_ids
-        self.parent_view.selected_ids = kept | selected_on_page
+        selected_ids: Set[int] = set()
+        rejected_names: List[str] = []
+        for user in self.values:
+            member = (
+                user
+                if isinstance(user, discord.Member)
+                else self.parent_view.guild.get_member(user.id)
+            )
+            if member is None or member.bot:
+                rejected_names.append(user.display_name)
+                continue
+            selected_ids.add(member.id)
+
+        self.parent_view.selected_ids = selected_ids
         self.parent_view.rebuild_items()
         await interaction.response.edit_message(
             embed=self.parent_view.build_embed(),
             view=self.parent_view,
         )
+        if rejected_names:
+            await interaction.followup.send(
+                "❌ 봇 계정은 팀원으로 선택할 수 없습니다: "
+                + ", ".join(rejected_names),
+                ephemeral=True,
+            )
 
 
 class TeamFormationView(discord.ui.View):
@@ -152,20 +137,13 @@ class TeamFormationView(discord.ui.View):
         self,
         guild: discord.Guild,
         host: discord.Member,
-        members: List[discord.Member],
     ) -> None:
         super().__init__(timeout=VIEW_TIMEOUT)
         self.guild = guild
         self.host = host
-        self.members = members
         self.selected_ids: Set[int] = set()
         self.team_sizes: Optional[List[int]] = None
         self.format_label: Optional[str] = None
-        self.member_page = 0
-        self.total_member_pages = max(
-            1,
-            (len(members) + MEMBERS_PER_PAGE - 1) // MEMBERS_PER_PAGE,
-        )
         self.rebuild_items()
 
     def set_format(self, sizes: List[int], *, label: str) -> None:
@@ -177,14 +155,6 @@ class TeamFormationView(discord.ui.View):
         if not self.team_sizes:
             return 0
         return sum(self.team_sizes)
-
-    @property
-    def human_member_ids(self) -> Set[int]:
-        return {member.id for member in self.members}
-
-    def page_members(self) -> List[discord.Member]:
-        start = self.member_page * MEMBERS_PER_PAGE
-        return self.members[start : start + MEMBERS_PER_PAGE]
 
     def rebuild_items(self) -> None:
         self.clear_items()
@@ -217,28 +187,7 @@ class TeamFormationView(discord.ui.View):
         custom_button.callback = self._custom_format_callback
         self.add_item(custom_button)
 
-        self.add_item(MemberSelectMenu(self))
-
-        if self.total_member_pages > 1:
-            prev_button = discord.ui.Button(
-                label="◀ 멤버 이전",
-                style=discord.ButtonStyle.secondary,
-                custom_id="team_member_prev",
-                row=MEMBER_NAV_ROW,
-                disabled=self.member_page <= 0,
-            )
-            prev_button.callback = self._member_prev_callback
-            self.add_item(prev_button)
-
-            next_button = discord.ui.Button(
-                label="멤버 다음 ▶",
-                style=discord.ButtonStyle.secondary,
-                custom_id="team_member_next",
-                row=MEMBER_NAV_ROW,
-                disabled=self.member_page >= self.total_member_pages - 1,
-            )
-            next_button.callback = self._member_next_callback
-            self.add_item(next_button)
+        self.add_item(MemberUserSelect(self))
 
         split_button = discord.ui.Button(
             label="팀 나누기",
@@ -280,18 +229,6 @@ class TeamFormationView(discord.ui.View):
     async def _custom_format_callback(self, interaction: discord.Interaction) -> None:
         await interaction.response.send_modal(CustomFormatModal(self))
 
-    async def _member_prev_callback(self, interaction: discord.Interaction) -> None:
-        if self.member_page > 0:
-            self.member_page -= 1
-        self.rebuild_items()
-        await interaction.response.edit_message(embed=self.build_embed(), view=self)
-
-    async def _member_next_callback(self, interaction: discord.Interaction) -> None:
-        if self.member_page < self.total_member_pages - 1:
-            self.member_page += 1
-        self.rebuild_items()
-        await interaction.response.edit_message(embed=self.build_embed(), view=self)
-
     async def _clear_members_callback(self, interaction: discord.Interaction) -> None:
         self.selected_ids.clear()
         self.rebuild_items()
@@ -301,12 +238,16 @@ class TeamFormationView(discord.ui.View):
         self.selected_ids.clear()
         self.team_sizes = None
         self.format_label = None
-        self.member_page = 0
         self.rebuild_items()
         await interaction.response.edit_message(embed=self.build_embed(), view=self)
 
     async def _split_callback(self, interaction: discord.Interaction) -> None:
-        self.selected_ids &= self.human_member_ids
+        self.selected_ids = {
+            member_id
+            for member_id in self.selected_ids
+            if (member := self.guild.get_member(member_id)) is not None
+            and not member.bot
+        }
         if not self.team_sizes or not self.format_label:
             await interaction.response.send_message(
                 "❌ 먼저 팀 구성을 선택해주세요.",
@@ -329,7 +270,6 @@ class TeamFormationView(discord.ui.View):
         result_view = TeamResultView(
             guild=self.guild,
             host=self.host,
-            members=self.members,
             team_sizes=self.team_sizes,
             format_label=self.format_label,
             selected_ids=set(self.selected_ids),
@@ -374,12 +314,8 @@ class TeamFormationView(discord.ui.View):
             name="2️⃣ 멤버 선택",
             value=(
                 f"{count_text}\n"
-                "멤버 선택 메뉴에서 참가자를 고르세요. **봇은 목록에 표시되지 않습니다.**"
-                + (
-                    f"\n멤버가 많으면 **◀ 멤버 이전 / 멤버 다음 ▶** 로 페이지를 넘기세요."
-                    if self.total_member_pages > 1
-                    else ""
-                )
+                "UserSelect에서 참가자를 검색해 고르세요. "
+                "**봇을 선택하면 자동으로 제외됩니다.**"
             ),
             inline=False,
         )
@@ -401,8 +337,7 @@ class TeamFormationView(discord.ui.View):
 
         embed.set_footer(
             text=(
-                f"봇 제외 {len(self.members)}명 · "
-                f"페이지 {self.member_page + 1}/{self.total_member_pages} · "
+                f"최대 {MAX_MEMBER_SELECT}명 선택 · "
                 f"{int(VIEW_TIMEOUT // 60)}분 후 만료"
             )
         )
@@ -415,7 +350,6 @@ class TeamResultView(discord.ui.View):
         *,
         guild: discord.Guild,
         host: discord.Member,
-        members: List[discord.Member],
         team_sizes: List[int],
         format_label: str,
         selected_ids: Set[int],
@@ -424,7 +358,6 @@ class TeamResultView(discord.ui.View):
         super().__init__(timeout=VIEW_TIMEOUT)
         self.guild = guild
         self.host = host
-        self.members = members
         self.team_sizes = team_sizes
         self.format_label = format_label
         self.selected_ids = selected_ids
@@ -472,7 +405,6 @@ class TeamResultView(discord.ui.View):
         formation_view = TeamFormationView(
             guild=self.guild,
             host=self.host,
-            members=self.members,
         )
         formation_view.selected_ids = set(self.selected_ids)
         formation_view.team_sizes = list(self.team_sizes)
@@ -514,32 +446,6 @@ class TeamFormation(commands.Cog):
 
         await interaction.response.defer()
 
-        try:
-            members = await asyncio.wait_for(
-                fetch_human_members(interaction.guild),
-                timeout=MEMBER_FETCH_TIMEOUT,
-            )
-        except asyncio.TimeoutError:
-            await interaction.followup.send(
-                "❌ 멤버 목록을 불러오는 데 시간이 너무 오래 걸립니다.\n"
-                "잠시 후 다시 시도해주세요.",
-                ephemeral=True,
-            )
-            return
-        except discord.HTTPException as exc:
-            await interaction.followup.send(
-                f"❌ 멤버 목록을 불러오지 못했습니다.\n`{exc}`",
-                ephemeral=True,
-            )
-            return
-
-        if not members:
-            await interaction.followup.send(
-                "❌ 선택 가능한 멤버가 없습니다.",
-                ephemeral=True,
-            )
-            return
-
         host = interaction.user
         if not isinstance(host, discord.Member):
             await interaction.followup.send(
@@ -551,7 +457,6 @@ class TeamFormation(commands.Cog):
         view = TeamFormationView(
             guild=interaction.guild,
             host=host,
-            members=members,
         )
         try:
             await interaction.followup.send(

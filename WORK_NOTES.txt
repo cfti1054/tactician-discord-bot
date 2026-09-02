@@ -1,15 +1,19 @@
 ================================================================================
   tactician-discord-bot 작업 정리
-  최종 수정: 2026-08-30
+  최종 수정: 2026-09-02
 ================================================================================
 
 ■ Git 커밋 기록
 --------------------------------------------------------------------------------
   (최신 항목이 위)
 
+  [미커밋] 2026-09-02
+  /팀정하기 멤버 선택을 UserSelect로 변경
+  멤버 페이지 이동 제거, 서버 전체 검색 지원, 봇 선택 자동 제외
+
   [미커밋] 2026-08-30
   /명령설정 추가 — 역할별 슬래시 명령 사용 제한 (Modal)
-  /팀정하기 UI 개선 — Embed 3구역·String Select(봇 제외)·페이지네이션
+  /팀정하기 UI 개선 — Embed 3구역·멤버 선택 UI
   CONFIG_FILE 환경 변수, config.json command_roles 필드 추가
   discord.py>=2.7.0 (모달 RoleSelect·Label 지원)
   README·WORK_NOTES 갱신
@@ -204,7 +208,7 @@ tactician-discord-bot/
   /팀정하기    — 권한 제한 없음 (일반 멤버 사용 가능, /명령설정으로 역할 제한 가능)
                  Embed 3구역(팀 구성 / 멤버 선택 / 실행) + 버튼 row 분리
                  팀 구성 버튼(2:2, 3:3, 4:4, 5:5, 2:2:2:2) + Modal 직접입력
-                 멤버 String Select (봇 제외, 페이지당 25명)
+                 멤버 UserSelect (서버 전체 검색, 최대 25명, 봇 선택 시 제외)
                  인원 일치 시 랜덤 팀 배정, 다시 섞기·멤버 수정
                  View 세션 30분 후 만료
 
@@ -251,16 +255,15 @@ config.json 예시:
 UI 구성:
   Row 0: 2:2 | 3:3 | 4:4 | 5:5 | 2:2:2:2        ← 1️⃣ 팀 구성
   Row 1: ✏️ 직접입력                              ← 1️⃣ 팀 구성
-  Row 2: 👥 String Select (봇 제외 멤버만)        ← 2️⃣ 멤버 선택
-  Row 3: ◀ 멤버 이전 | 멤버 다음 ▶ (25명 초과 시)
+  Row 2: 👥 UserSelect (서버 멤버 검색·선택)       ← 2️⃣ 멤버 선택
   Row 4: 🎲 팀 나누기 | 선택 해제 | 🔄 초기화     ← 3️⃣ 실행
   Embed: 1️⃣ 팀 구성 / 2️⃣ 멤버 선택 / 3️⃣ 실행 안내
 
 멤버 목록:
-  · guild.fetch_members() 후 bot=False 만 Select 옵션에 포함
-  · UserSelect는 Discord API상 봇 필터 불가 → String Select 사용
-  · display_name 가나다순 정렬, 페이지당 25명
-  · 다른 페이지에서 선택한 멤버는 유지 (페이지별 merge)
+  · Discord UserSelect로 서버 전체 멤버 검색·스크롤
+  · 멤버 페이지 이전/다음 버튼 불필요
+  · 한 번에 최대 25명 선택
+  · UserSelect에서 봇을 선택하면 콜백에서 자동 제외하고 안내
 
 팀 배정:
   · parse_team_format("3:3:2") → [3, 3, 2]
@@ -269,9 +272,9 @@ UI 구성:
   · 결과 Embed + TeamResultView (다시 섞기 / 멤버 수정)
 
 제한:
-  · String Select 옵션 최대 25개/페이지 (Discord API)
+  · UserSelect는 한 번에 최대 25명 선택 (Discord API)
+  · 직접입력 팀 구성도 합계 25명 이하로 제한
   · VIEW_TIMEOUT = 1800초 (30분)
-  · MEMBER_FETCH_TIMEOUT = 30초
 
 
 ■ 9. 활동 집계 (activity_tracker)
@@ -366,9 +369,8 @@ api/  — FastAPI, ActivityStore 공유
   슬래시 명령이 안 보임
   → GUILD_ID 설정 후 재시작(즉시 sync) 권장
 
-  /팀정하기 멤버 목록이 비어 있음
-  → Server Members Intent 미활성화
-  → fetch_members 타임아웃(30초) — 멤버 많은 서버는 재시도
+  /팀정하기에서 봇 계정을 선택함
+  → UserSelect는 봇을 목록에서 숨길 수 없어 선택 후 자동 제외·안내
 
   Railway 재배포 후 설정·알림 채널 초기화
   → 컨테이너 파일시스템은 휘발성
