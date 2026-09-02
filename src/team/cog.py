@@ -15,12 +15,10 @@ FORMAT_PRESETS: List[Tuple[str, List[int]]] = [
     ("2:2:2:2", [2, 2, 2, 2]),
 ]
 
-FORMAT_ROW = 0
-CUSTOM_ROW = 1
-MEMBER_SELECT_ROW = 2
-ACTION_ROW = 4
 VIEW_TIMEOUT = 1800.0
-MEMBERS_PER_PICKER_PAGE = 9
+MEMBER_PICKER_COLS = 3
+MEMBER_PICKER_ROWS = 4
+MEMBERS_PER_PICKER_PAGE = MEMBER_PICKER_COLS * MEMBER_PICKER_ROWS
 MAX_MEMBER_BUTTON_LABEL = 7
 BUTTON_LABEL_PADDING = "\u2002"
 
@@ -37,6 +35,13 @@ def member_button_label(display_name: str) -> str:
     left = padding // 2
     right = padding - left
     return BUTTON_LABEL_PADDING * left + label + BUTTON_LABEL_PADDING * right
+
+
+def section_separator() -> discord.ui.Separator:
+    return discord.ui.Separator(
+        visible=True,
+        spacing=discord.SeparatorSpacing.small,
+    )
 
 
 def parse_team_format(text: str) -> Optional[List[int]]:
@@ -99,10 +104,7 @@ class CustomFormatModal(discord.ui.Modal, title="팀 구성 직접 입력"):
             return
         self.parent_view.set_format(sizes, label=self.format_input.value.strip())
         self.parent_view.rebuild_items()
-        await interaction.response.edit_message(
-            embed=self.parent_view.build_embed(),
-            view=self.parent_view,
-        )
+        await interaction.response.edit_message(view=self.parent_view)
 
 
 class MemberSearchModal(discord.ui.Modal, title="멤버 검색"):
@@ -113,7 +115,7 @@ class MemberSearchModal(discord.ui.Modal, title="멤버 검색"):
         required=True,
     )
 
-    def __init__(self, picker_view: "MemberPickerView") -> None:
+    def __init__(self, picker_view: MemberPickerView) -> None:
         super().__init__()
         self.picker_view = picker_view
 
@@ -121,18 +123,14 @@ class MemberSearchModal(discord.ui.Modal, title="멤버 검색"):
         self.picker_view.query = self.search_input.value.strip()
         self.picker_view.page = 0
         self.picker_view.rebuild_items()
-        await interaction.response.edit_message(
-            embed=self.picker_view.build_embed(),
-            view=self.picker_view,
-        )
+        await interaction.response.edit_message(view=self.picker_view)
 
 
-
-class MemberPickerView(discord.ui.View):
+class MemberPickerView(discord.ui.LayoutView):
     def __init__(
         self,
         *,
-        parent_view: "TeamFormationView",
+        parent_view: TeamFormationView,
         members: List[discord.Member],
         owner_id: int,
         source_message: discord.Message,
@@ -184,76 +182,121 @@ class MemberPickerView(discord.ui.View):
         start = self.page * MEMBERS_PER_PICKER_PAGE
         return self.filtered_members[start : start + MEMBERS_PER_PICKER_PAGE]
 
+    def _header_text(self) -> str:
+        visible_count = len(self.filtered_members)
+        query_text = f"`{self.query}`" if self.query else "전체 멤버"
+        return (
+            "## 👥 멤버 선택\n"
+            "멤버 버튼을 눌러 선택하거나 해제하세요.\n"
+            f"검색: **{query_text}** · 결과 **{visible_count}명** · "
+            f"선택 **{len(self.selected_ids)}명** · "
+            f"페이지 **{self.page + 1}/{self.total_pages}**"
+        )
+
+    def _selected_text(self) -> str:
+        selected_members = [
+            member for member in self.members if member.id in self.selected_ids
+        ]
+        selected_text = "  ".join(member.mention for member in selected_members)
+        if len(selected_text) > 900:
+            selected_text = selected_text[:896] + "…"
+        return f"**✅ 선택됨**\n{selected_text}"
+
     def rebuild_items(self) -> None:
         self.clear_items()
         self.page = min(self.page, self.total_pages - 1)
 
-        for index, member in enumerate(self.page_members()):
-            selected = member.id in self.selected_ids
-            button = discord.ui.Button(
-                label=member_button_label(member.display_name),
-                style=(
-                    discord.ButtonStyle.success
-                    if selected
-                    else discord.ButtonStyle.secondary
-                ),
-                custom_id=f"team_picker_member_{member.id}",
-                row=index // 3,
-            )
-            button.callback = self._make_member_callback(member.id)
-            self.add_item(button)
+        self.add_item(discord.ui.TextDisplay(content=self._header_text()))
+        if self.selected_ids:
+            self.add_item(discord.ui.TextDisplay(content=self._selected_text()))
 
+        page = self.page_members()
+        for row_index in range(MEMBER_PICKER_ROWS):
+            row_members = page[
+                row_index * MEMBER_PICKER_COLS : (row_index + 1) * MEMBER_PICKER_COLS
+            ]
+            if not row_members:
+                continue
+            row = discord.ui.ActionRow()
+            for member in row_members:
+                selected = member.id in self.selected_ids
+                button = discord.ui.Button(
+                    label=member_button_label(member.display_name),
+                    style=(
+                        discord.ButtonStyle.success
+                        if selected
+                        else discord.ButtonStyle.secondary
+                    ),
+                    custom_id=f"team_picker_member_{member.id}",
+                )
+                button.callback = self._make_member_callback(member.id)
+                row.add_item(button)
+            self.add_item(row)
+
+        if not page:
+            self.add_item(
+                discord.ui.TextDisplay(
+                    content=(
+                        "**검색 결과 없음**\n"
+                        "다른 이름으로 검색하거나 **검색 해제**를 눌러주세요."
+                    )
+                )
+            )
+
+        self.add_item(section_separator())
+
+        control_row = discord.ui.ActionRow()
         previous = discord.ui.Button(
             label="이전",
             emoji="◀",
             style=discord.ButtonStyle.secondary,
             custom_id="team_picker_previous",
-            row=3,
             disabled=self.page <= 0,
         )
         previous.callback = self._previous_callback
-        self.add_item(previous)
+        control_row.add_item(previous)
 
         following = discord.ui.Button(
             label="다음",
             emoji="▶",
             style=discord.ButtonStyle.secondary,
             custom_id="team_picker_next",
-            row=3,
             disabled=self.page >= self.total_pages - 1,
         )
         following.callback = self._next_callback
-        self.add_item(following)
+        control_row.add_item(following)
 
         search = discord.ui.Button(
             label="검색",
             emoji="🔍",
             style=discord.ButtonStyle.primary,
             custom_id="team_picker_search",
-            row=3,
         )
         search.callback = self._search_callback
-        self.add_item(search)
+        control_row.add_item(search)
 
         clear_search = discord.ui.Button(
             label="검색 해제",
             style=discord.ButtonStyle.secondary,
             custom_id="team_picker_clear_search",
-            row=3,
             disabled=not self.query,
         )
         clear_search.callback = self._clear_search_callback
-        self.add_item(clear_search)
+        control_row.add_item(clear_search)
 
         submit = discord.ui.Button(
             label="선택 완료",
             emoji="✅",
             style=discord.ButtonStyle.success,
             custom_id="team_picker_submit",
-            row=3,
         )
         submit.callback = self._submit_callback
-        self.add_item(submit)
+        control_row.add_item(submit)
+        self.add_item(control_row)
+
+        self.add_item(
+            discord.ui.TextDisplay(content="-# 봇 계정은 목록에서 제외됩니다.")
+        )
 
     def _make_member_callback(self, member_id: int):
         async def callback(interaction: discord.Interaction) -> None:
@@ -262,10 +305,7 @@ class MemberPickerView(discord.ui.View):
             else:
                 self.selected_ids.add(member_id)
             self.rebuild_items()
-            await interaction.response.edit_message(
-                embed=self.build_embed(),
-                view=self,
-            )
+            await interaction.response.edit_message(view=self)
 
         return callback
 
@@ -273,13 +313,13 @@ class MemberPickerView(discord.ui.View):
         if self.page > 0:
             self.page -= 1
         self.rebuild_items()
-        await interaction.response.edit_message(embed=self.build_embed(), view=self)
+        await interaction.response.edit_message(view=self)
 
     async def _next_callback(self, interaction: discord.Interaction) -> None:
         if self.page < self.total_pages - 1:
             self.page += 1
         self.rebuild_items()
-        await interaction.response.edit_message(embed=self.build_embed(), view=self)
+        await interaction.response.edit_message(view=self)
 
     async def _search_callback(self, interaction: discord.Interaction) -> None:
         await interaction.response.send_modal(MemberSearchModal(self))
@@ -288,78 +328,33 @@ class MemberPickerView(discord.ui.View):
         self.query = ""
         self.page = 0
         self.rebuild_items()
-        await interaction.response.edit_message(embed=self.build_embed(), view=self)
+        await interaction.response.edit_message(view=self)
 
     async def _submit_callback(self, interaction: discord.Interaction) -> None:
         valid_ids = {member.id for member in self.members}
         self.selected_ids &= valid_ids
         self.parent_view.selected_ids = set(self.selected_ids)
         self.parent_view.rebuild_items()
-        await interaction.response.edit_message(
-            embed=discord.Embed(
-                title="✅ 멤버 선택 완료",
-                description=f"총 **{len(self.selected_ids)}명**을 선택했습니다.",
-                color=discord.Color.green(),
-            ),
-            view=None,
-        )
-        try:
-            await self.source_message.edit(
-                embed=self.parent_view.build_embed(),
-                view=self.parent_view,
+        done_view = discord.ui.LayoutView(timeout=None)
+        done_view.add_item(
+            discord.ui.TextDisplay(
+                content=(
+                    "## ✅ 멤버 선택 완료\n"
+                    f"총 **{len(self.selected_ids)}명**을 선택했습니다."
+                )
             )
+        )
+        await interaction.response.edit_message(view=done_view)
+        try:
+            await self.source_message.edit(view=self.parent_view)
         except discord.HTTPException as exc:
             await interaction.followup.send(
                 f"❌ 팀 정하기 화면을 갱신하지 못했습니다.\n`{exc}`",
                 ephemeral=True,
             )
 
-    def build_embed(self) -> discord.Embed:
-        visible_count = len(self.filtered_members)
-        query_text = f"`{self.query}`" if self.query else "전체 멤버"
-        embed = discord.Embed(
-            title="👥 멤버 선택",
-            description=(
-                "멤버 버튼을 눌러 선택하거나 해제하세요.\n"
-                f"검색: **{query_text}** · 결과 **{visible_count}명**"
-            ),
-            color=discord.Color.blurple(),
-        )
-        embed.add_field(
-            name="선택 인원",
-            value=f"**{len(self.selected_ids)}명**",
-            inline=True,
-        )
-        embed.add_field(
-            name="페이지",
-            value=f"**{self.page + 1}/{self.total_pages}**",
-            inline=True,
-        )
-        if self.selected_ids:
-            selected_members = [
-                member
-                for member in self.members
-                if member.id in self.selected_ids
-            ]
-            selected_text = "  ".join(member.mention for member in selected_members)
-            if len(selected_text) > 1024:
-                selected_text = selected_text[:1020] + "…"
-            embed.add_field(
-                name="✅ 선택됨",
-                value=selected_text,
-                inline=False,
-            )
-        if not self.page_members():
-            embed.add_field(
-                name="검색 결과 없음",
-                value="다른 이름으로 검색하거나 **검색 해제**를 눌러주세요.",
-                inline=False,
-            )
-        embed.set_footer(text="봇 계정은 목록에서 제외됩니다.")
-        return embed
 
-
-class TeamFormationView(discord.ui.View):
+class TeamFormationView(discord.ui.LayoutView):
     def __init__(
         self,
         guild: discord.Guild,
@@ -383,19 +378,76 @@ class TeamFormationView(discord.ui.View):
             return 0
         return sum(self.team_sizes)
 
+    def _format_section_text(self) -> str:
+        if self.format_label and self.team_sizes:
+            format_text = f"**{self.format_label}** · 총 **{self.required_count}명** 필요"
+        else:
+            format_text = "아직 선택되지 않음"
+        return (
+            "### 1️⃣ 팀 구성\n"
+            f"{format_text}\n"
+            "`2:2` `3:3` 등 버튼 또는 **직접입력**"
+        )
+
+    def _member_section_text(self) -> str:
+        selected_count = len(self.selected_ids)
+        if self.team_sizes and selected_count == self.required_count:
+            count_text = f"**{selected_count}명** · ✅ 팀 나누기 가능"
+        elif self.team_sizes:
+            remaining = self.required_count - selected_count
+            count_text = f"**{selected_count}명** · ⚠️ **{remaining}명** 더 선택"
+        else:
+            count_text = f"**{selected_count}명**"
+        return (
+            "### 2️⃣ 멤버 선택\n"
+            f"{count_text}\n"
+            "**👥 멤버 선택**에서 참가자를 고르거나 "
+            "**🔍 검색**으로 이름을 찾으세요. **봇은 제외됩니다.**"
+        )
+
+    def _selected_members_text(self) -> str:
+        mentions = []
+        for member_id in sorted(self.selected_ids):
+            member = self.guild.get_member(member_id)
+            mentions.append(member.mention if member else f"<@{member_id}>")
+        selected_text = " ".join(mentions)
+        if len(selected_text) > 900:
+            selected_text = selected_text[:896] + "…"
+        return f"**선택된 멤버**\n{selected_text}"
+
+    def _action_section_text(self) -> str:
+        return (
+            "### 3️⃣ 실행\n"
+            "인원이 맞으면 **🎲 팀 나누기** 버튼을 누르세요."
+        )
+
     def rebuild_items(self) -> None:
         self.clear_items()
 
+        self.add_item(
+            discord.ui.Section(
+                "## 🎮 팀 정하기",
+                f"주최: **{self.host.display_name}**",
+                accessory=discord.ui.Thumbnail(self.host.display_avatar.url),
+            )
+        )
+        self.add_item(discord.ui.TextDisplay(content=self._format_section_text()))
+
+        preset_row = discord.ui.ActionRow()
         for index, (label, sizes) in enumerate(FORMAT_PRESETS):
             selected = self.team_sizes == sizes and self.format_label == label
             button = discord.ui.Button(
                 label=label,
-                style=discord.ButtonStyle.primary if selected else discord.ButtonStyle.secondary,
+                style=(
+                    discord.ButtonStyle.primary
+                    if selected
+                    else discord.ButtonStyle.secondary
+                ),
                 custom_id=f"team_preset_{index}",
-                row=FORMAT_ROW,
             )
             button.callback = self._make_preset_callback(label, sizes)
-            self.add_item(button)
+            preset_row.add_item(button)
+        self.add_item(preset_row)
 
         custom_selected = False
         if self.team_sizes and self.format_label:
@@ -404,60 +456,82 @@ class TeamFormationView(discord.ui.View):
                     break
             else:
                 custom_selected = True
+        custom_row = discord.ui.ActionRow()
         custom_button = discord.ui.Button(
             label="직접입력",
             emoji="✏️",
-            style=discord.ButtonStyle.primary if custom_selected else discord.ButtonStyle.secondary,
+            style=(
+                discord.ButtonStyle.primary
+                if custom_selected
+                else discord.ButtonStyle.secondary
+            ),
             custom_id="team_custom_format",
-            row=CUSTOM_ROW,
         )
         custom_button.callback = self._custom_format_callback
-        self.add_item(custom_button)
+        custom_row.add_item(custom_button)
+        self.add_item(custom_row)
 
+        self.add_item(section_separator())
+
+        self.add_item(discord.ui.TextDisplay(content=self._member_section_text()))
+        member_row = discord.ui.ActionRow()
         member_picker_button = discord.ui.Button(
             label="멤버 선택",
             emoji="👥",
             style=discord.ButtonStyle.primary,
             custom_id="team_open_member_picker",
-            row=MEMBER_SELECT_ROW,
         )
         member_picker_button.callback = self._member_picker_callback
-        self.add_item(member_picker_button)
+        member_row.add_item(member_picker_button)
+        self.add_item(member_row)
 
+        if self.selected_ids:
+            self.add_item(
+                discord.ui.TextDisplay(content=self._selected_members_text())
+            )
+
+        self.add_item(section_separator())
+
+        self.add_item(discord.ui.TextDisplay(content=self._action_section_text()))
+        action_row = discord.ui.ActionRow()
         split_button = discord.ui.Button(
             label="팀 나누기",
             emoji="🎲",
             style=discord.ButtonStyle.primary,
             custom_id="team_split",
-            row=ACTION_ROW,
         )
         split_button.callback = self._split_callback
-        self.add_item(split_button)
+        action_row.add_item(split_button)
 
         clear_button = discord.ui.Button(
             label="선택 해제",
             style=discord.ButtonStyle.secondary,
             custom_id="team_clear_members",
-            row=ACTION_ROW,
         )
         clear_button.callback = self._clear_members_callback
-        self.add_item(clear_button)
+        action_row.add_item(clear_button)
 
         reset_button = discord.ui.Button(
             label="초기화",
             emoji="🔄",
             style=discord.ButtonStyle.danger,
             custom_id="team_reset",
-            row=ACTION_ROW,
         )
         reset_button.callback = self._reset_callback
-        self.add_item(reset_button)
+        action_row.add_item(reset_button)
+        self.add_item(action_row)
+
+        self.add_item(
+            discord.ui.TextDisplay(
+                content=f"-# {int(VIEW_TIMEOUT // 60)}분 후 만료"
+            )
+        )
 
     def _make_preset_callback(self, label: str, sizes: List[int]):
         async def callback(interaction: discord.Interaction) -> None:
             self.set_format(sizes, label=label)
             self.rebuild_items()
-            await interaction.response.edit_message(embed=self.build_embed(), view=self)
+            await interaction.response.edit_message(view=self)
 
         return callback
 
@@ -495,23 +569,19 @@ class TeamFormationView(discord.ui.View):
             owner_id=interaction.user.id,
             source_message=interaction.message,
         )
-        await interaction.followup.send(
-            embed=picker.build_embed(),
-            view=picker,
-            ephemeral=True,
-        )
+        await interaction.followup.send(view=picker, ephemeral=True)
 
     async def _clear_members_callback(self, interaction: discord.Interaction) -> None:
         self.selected_ids.clear()
         self.rebuild_items()
-        await interaction.response.edit_message(embed=self.build_embed(), view=self)
+        await interaction.response.edit_message(view=self)
 
     async def _reset_callback(self, interaction: discord.Interaction) -> None:
         self.selected_ids.clear()
         self.team_sizes = None
         self.format_label = None
         self.rebuild_items()
-        await interaction.response.edit_message(embed=self.build_embed(), view=self)
+        await interaction.response.edit_message(view=self)
 
     async def _split_callback(self, interaction: discord.Interaction) -> None:
         self.selected_ids = {
@@ -552,66 +622,6 @@ class TeamFormationView(discord.ui.View):
             view=result_view,
         )
 
-    def build_embed(self) -> discord.Embed:
-        embed = discord.Embed(
-            title="🎮 팀 정하기",
-            color=discord.Color.blurple(),
-        )
-        embed.set_author(name=f"주최: {self.host.display_name}", icon_url=self.host.display_avatar.url)
-
-        if self.format_label and self.team_sizes:
-            format_text = f"**{self.format_label}** · 총 **{self.required_count}명** 필요"
-        else:
-            format_text = "아직 선택되지 않음"
-
-        selected_count = len(self.selected_ids)
-        if self.team_sizes and selected_count == self.required_count:
-            count_text = f"**{selected_count}명** · ✅ 팀 나누기 가능"
-        elif self.team_sizes:
-            remaining = self.required_count - selected_count
-            count_text = f"**{selected_count}명** · ⚠️ **{remaining}명** 더 선택"
-        else:
-            count_text = f"**{selected_count}명**"
-
-        embed.description = (
-            "아래 구역 순서대로 설정하세요.\n"
-            "━━━━━━━━━━━━━━━━━━━━"
-        )
-        embed.add_field(
-            name="1️⃣ 팀 구성",
-            value=f"{format_text}\n`2:2` `3:3` 등 버튼 또는 **직접입력**",
-            inline=False,
-        )
-        embed.add_field(
-            name="2️⃣ 멤버 선택",
-            value=(
-                f"{count_text}\n"
-                "**👥 멤버 선택**에서 참가자를 버튼으로 고르거나 "
-                "**🔍 검색**으로 이름을 찾으세요. **봇은 제외됩니다.**"
-            ),
-            inline=False,
-        )
-        embed.add_field(
-            name="3️⃣ 실행",
-            value="인원이 맞으면 **🎲 팀 나누기** 버튼을 누르세요.",
-            inline=False,
-        )
-
-        if self.selected_ids:
-            mentions = []
-            for member_id in sorted(self.selected_ids):
-                member = self.guild.get_member(member_id)
-                mentions.append(member.mention if member else f"<@{member_id}>")
-            selected_text = " ".join(mentions)
-            if len(selected_text) > 1024:
-                selected_text = selected_text[:1020] + "…"
-            embed.add_field(name="선택된 멤버", value=selected_text, inline=False)
-
-        embed.set_footer(
-            text=f"{int(VIEW_TIMEOUT // 60)}분 후 만료"
-        )
-        return embed
-
 
 class TeamResultView(discord.ui.View):
     def __init__(
@@ -638,7 +648,10 @@ class TeamResultView(discord.ui.View):
             description=f"**{self.format_label}** · {sum(self.team_sizes)}명",
             color=discord.Color.green(),
         )
-        embed.set_author(name=f"주최: {self.host.display_name}", icon_url=self.host.display_avatar.url)
+        embed.set_author(
+            name=f"주최: {self.host.display_name}",
+            icon_url=self.host.display_avatar.url,
+        )
 
         for index, team in enumerate(self.teams):
             emoji = TEAM_EMOJIS[index % len(TEAM_EMOJIS)]
@@ -680,7 +693,7 @@ class TeamResultView(discord.ui.View):
         formation_view.format_label = self.format_label
         formation_view.rebuild_items()
         await interaction.response.edit_message(
-            embed=formation_view.build_embed(),
+            embed=None,
             view=formation_view,
         )
 
@@ -728,10 +741,7 @@ class TeamFormation(commands.Cog):
             host=host,
         )
         try:
-            await interaction.followup.send(
-                embed=view.build_embed(),
-                view=view,
-            )
+            await interaction.followup.send(view=view)
         except discord.HTTPException as exc:
             await interaction.followup.send(
                 f"❌ 팀 정하기 UI를 표시하지 못했습니다.\n`{exc}`",
