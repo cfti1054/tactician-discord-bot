@@ -113,7 +113,7 @@ Embed와 버튼 row로 **3구역**이 구분됩니다.
 
 ## TFT 패치·소식 (AI 없음)
 
-공식 TFT 사이트([패치 노트](https://teamfighttactics.leagueoflegends.com/ko-kr/news/tags/patch-notes/), [새 소식](https://teamfighttactics.leagueoflegends.com/ko-kr/news/))를 주기적으로 확인하고, 변경 줄을 규칙으로 상향/하향/조정으로 나눠 Discord에 올립니다. OpenAI 등 유료 API는 사용하지 않습니다.
+공식 TFT 사이트([패치 노트](https://teamfighttactics.leagueoflegends.com/ko-kr/news/tags/patch-notes/), [새 소식](https://teamfighttactics.leagueoflegends.com/ko-kr/news/))를 주기적으로 확인하고, 변경 줄을 규칙으로 상향/하향/조정으로 나눠 Discord에 올립니다. 기존 공식 패치 글에 변경 항목이 추가되거나 수정되면 **추가 패치(핫픽스)** 알림으로 새 항목만 게시합니다. OpenAI 등 유료 API는 사용하지 않습니다.
 
 | 명령 | 설명 |
 |------|------|
@@ -121,7 +121,7 @@ Embed와 버튼 row로 **3구역**이 구분됩니다.
 | `/tft패치` | 최신 공식 패치 요약 |
 | `/tft소식` | 공식 새 소식 최근 5건 |
 
-알림 채널을 처음 설정하면 현재 최신 패치 1건을 올리고, 이후에는 새로 올라온 패치·게임 업데이트·개발자 글만 알립니다. 확인 주기는 기본 30분(`TFT_POLL_MINUTES`)입니다.
+알림 채널을 처음 설정하면 현재 최신 패치 1건을 올리고 본문 스냅샷을 저장합니다. 이후에는 새 패치·게임 업데이트·개발자 글과 공식 패치 글의 추가 패치(핫픽스)를 알립니다. 확인 주기는 기본 30분(`TFT_POLL_MINUTES`)입니다.
 
 ## Steam 할인 알림 (AI 없음)
 

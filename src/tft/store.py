@@ -18,6 +18,7 @@ class TftDigestStore:
             "channel_id": None,
             "channel_name": None,
             "seen_ids": [],
+            "patch_snapshots": {},
             "initialized": False,
         }
 
@@ -33,6 +34,8 @@ class TftDigestStore:
         self.data.update(loaded)
         if not isinstance(self.data.get("seen_ids"), list):
             self.data["seen_ids"] = []
+        if not isinstance(self.data.get("patch_snapshots"), dict):
+            self.data["patch_snapshots"] = {}
 
     def _write(self) -> None:
         os.makedirs(os.path.dirname(self.filepath), exist_ok=True)
@@ -62,6 +65,10 @@ class TftDigestStore:
     def has_seen(self, article_id: str) -> bool:
         return article_id in (self.data.get("seen_ids") or [])
 
+    def patch_snapshot(self, article_id: str) -> Optional[dict]:
+        value = (self.data.get("patch_snapshots") or {}).get(article_id)
+        return dict(value) if isinstance(value, dict) else None
+
     async def set_channel(self, channel_id: int, channel_name: str) -> None:
         self.data["channel_id"] = channel_id
         self.data["channel_name"] = channel_name
@@ -80,3 +87,19 @@ class TftDigestStore:
     async def mark_initialized(self, article_ids: List[str]) -> None:
         self.data["initialized"] = True
         await self.mark_seen(article_ids)
+
+    async def set_patch_snapshot(
+        self,
+        article_id: str,
+        content_hash: str,
+        change_keys: List[str],
+    ) -> None:
+        snapshots = self.data.setdefault("patch_snapshots", {})
+        snapshots[article_id] = {
+            "content_hash": content_hash,
+            "change_keys": list(change_keys),
+        }
+        if len(snapshots) > 20:
+            for old_id in list(snapshots)[:-20]:
+                del snapshots[old_id]
+        await self.save()

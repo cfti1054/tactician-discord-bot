@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import os
+import re
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 import discord
@@ -17,6 +18,10 @@ from tft.summarize import (
     ChangeItem,
     PatchSummary,
     build_section_fields,
+    filter_patch_summary,
+    patch_change_keys,
+    patch_content_hash,
+    patch_summary_has_changes,
     summarize_patch_html,
 )
 
@@ -116,6 +121,41 @@ def build_patch_embeds(summary: PatchSummary) -> List[discord.Embed]:
     return embeds
 
 
+def _patch_version(title: str) -> str:
+    match = re.search(r"\d+(?:\.\d+)+(?:[a-z])?", title, re.IGNORECASE)
+    return match.group(0) if match else title
+
+
+def build_hotfix_embeds(summary: PatchSummary) -> List[discord.Embed]:
+    header = discord.Embed(
+        title=f"🔥 TFT {_patch_version(summary.title)} 추가 패치(핫픽스)",
+        description="Riot 공식 패치 노트에 새로 추가되거나 수정된 변경 사항입니다.",
+        url=summary.url,
+        color=NERF_COLOR,
+    )
+    header.add_field(name="🔺 상향", value=f"**{len(summary.buffs)}**", inline=True)
+    header.add_field(name="🔻 하향", value=f"**{len(summary.nerfs)}**", inline=True)
+    if summary.mixed:
+        header.add_field(name="⚖️ 조정", value=f"**{len(summary.mixed)}**", inline=True)
+    if summary.others:
+        header.add_field(name="🐛 기타·버그 수정", value=f"**{len(summary.others)}**", inline=True)
+    header.add_field(
+        name="📄 원문",
+        value=f"[Riot 공식 패치 노트 열기]({summary.url})",
+        inline=False,
+    )
+    if summary.image_url:
+        header.set_thumbnail(url=summary.image_url)
+    header.set_footer(text="Riot 공식 패치 노트 · 규칙 기반 요약")
+
+    embeds: List[discord.Embed] = [header]
+    embeds.extend(_category_embeds("🔺 상향", summary.buffs, BUFF_COLOR))
+    embeds.extend(_category_embeds("🔻 하향", summary.nerfs, NERF_COLOR))
+    embeds.extend(_category_embeds("⚖️ 조정", summary.mixed, MIXED_COLOR))
+    embeds.extend(_category_embeds("🐛 기타·버그 수정", summary.others, OTHER_COLOR))
+    return embeds
+
+
 async def send_patch_summary(
     target,
     summary: PatchSummary,
@@ -126,6 +166,13 @@ async def send_patch_summary(
     first_batch = embeds[:EMBED_BATCH_SIZE]
     await target.send(content=prefix or None, embeds=first_batch)
 
+    for index in range(EMBED_BATCH_SIZE, len(embeds), EMBED_BATCH_SIZE):
+        await target.send(embeds=embeds[index : index + EMBED_BATCH_SIZE])
+
+
+async def send_hotfix_summary(target, summary: PatchSummary) -> None:
+    embeds = build_hotfix_embeds(summary)
+    await target.send(embeds=embeds[:EMBED_BATCH_SIZE])
     for index in range(EMBED_BATCH_SIZE, len(embeds), EMBED_BATCH_SIZE):
         await target.send(embeds=embeds[index : index + EMBED_BATCH_SIZE])
 
@@ -216,16 +263,65 @@ class TftDigest(commands.Cog):
         cards = await self.client.fetch_patch_cards()
         return cards[0] if cards else None
 
-    async def _build_patch_summary(self, card: NewsCard) -> PatchSummary:
+    async def _build_patch_state(
+        self,
+        card: NewsCard,
+    ) -> Tuple[PatchSummary, str, List[str]]:
         article = await self.client.fetch_article(card)
-        return summarize_patch_html(
-            body_html=article.get("body_html") or "",
+        body_html = article.get("body_html") or ""
+        summary = summarize_patch_html(
+            body_html=body_html,
             title=article.get("title") or card.title,
             url=article.get("url") or card.url,
             published_at=article.get("published_at") or card.published_at,
             image_url=article.get("image_url") or card.image_url,
             intro_fallback=article.get("description") or card.description,
         )
+        return summary, patch_content_hash(body_html), patch_change_keys(summary)
+
+    async def _build_patch_summary(self, card: NewsCard) -> PatchSummary:
+        summary, _, _ = await self._build_patch_state(card)
+        return summary
+
+    async def _remember_patch_state(
+        self,
+        card: NewsCard,
+        content_hash: str,
+        change_keys: List[str],
+    ) -> None:
+        await self.store.set_patch_snapshot(card.id, content_hash, change_keys)
+
+    async def _check_latest_patch_update(
+        self,
+        channel: discord.TextChannel,
+        cards: List[NewsCard],
+    ) -> bool:
+        latest_patch = next((card for card in cards if card.is_patch), None)
+        if latest_patch is None:
+            return False
+
+        summary, content_hash, change_keys = await self._build_patch_state(latest_patch)
+        previous = self.store.patch_snapshot(latest_patch.id)
+        if previous is None:
+            await self._remember_patch_state(latest_patch, content_hash, change_keys)
+            return False
+        if previous.get("content_hash") == content_hash:
+            return False
+
+        previous_keys = set(previous.get("change_keys") or [])
+        new_keys = [key for key in change_keys if key not in previous_keys]
+        if not new_keys:
+            await self._remember_patch_state(latest_patch, content_hash, change_keys)
+            return False
+
+        hotfix_summary = filter_patch_summary(summary, new_keys)
+        if not patch_summary_has_changes(hotfix_summary):
+            await self._remember_patch_state(latest_patch, content_hash, change_keys)
+            return False
+
+        await send_hotfix_summary(channel, hotfix_summary)
+        await self._remember_patch_state(latest_patch, content_hash, change_keys)
+        return True
 
     async def _collect_new_cards(self) -> List[NewsCard]:
         patch_cards = await self.client.fetch_patch_cards()
@@ -258,8 +354,9 @@ class TftDigest(commands.Cog):
                 break
             try:
                 if card.is_patch:
-                    summary = await self._build_patch_summary(card)
+                    summary, content_hash, change_keys = await self._build_patch_state(card)
                     await send_patch_summary(channel, summary)
+                    await self._remember_patch_state(card, content_hash, change_keys)
                 else:
                     embed = build_news_embed(card)
                     await channel.send(embed=embed)
@@ -290,11 +387,16 @@ class TftDigest(commands.Cog):
             latest_patch = next((card for card in cards if card.is_patch), None)
             if latest_patch is not None:
                 try:
-                    summary = await self._build_patch_summary(latest_patch)
+                    summary, content_hash, change_keys = await self._build_patch_state(latest_patch)
                     await send_patch_summary(
                         channel,
                         summary,
                         prefix="✅ TFT 알림을 시작했습니다. 현재 최신 패치입니다.",
+                    )
+                    await self._remember_patch_state(
+                        latest_patch,
+                        content_hash,
+                        change_keys,
                     )
                 except Exception as exc:
                     print(f"TFT 초기 패치 게시 실패: {exc}")
@@ -303,8 +405,15 @@ class TftDigest(commands.Cog):
             return
 
         posted = await self._post_new_items(channel, cards)
+        try:
+            hotfix_posted = await self._check_latest_patch_update(channel, cards)
+        except Exception as exc:
+            hotfix_posted = False
+            print(f"TFT 추가 패치 감지 실패: {exc}")
         if posted:
             print(f"TFT 새 소식 게시 : {posted}건")
+        if hotfix_posted:
+            print("TFT 추가 패치(핫픽스) 게시 완료")
 
     @check_tft_news.before_loop
     async def before_check_tft_news(self) -> None:
@@ -329,7 +438,7 @@ class TftDigest(commands.Cog):
         await interaction.response.send_message(
             f"✅ TFT 알림 채널을 {channel.mention}(으)로 설정했습니다.\n"
             f"약 {self.poll_minutes}분마다 공식 패치·소식을 확인하고, "
-            "새 글이 있으면 규칙 기반으로 요약해 올립니다.",
+            "새 글과 기존 패치 글의 추가 패치(핫픽스)를 규칙 기반으로 요약해 올립니다.",
             ephemeral=True,
         )
         if not self.store.initialized:

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from html import unescape
-from typing import List, Optional, Tuple
+from typing import Iterable, List, Optional, Set, Tuple
 
 ARROW_RE = re.compile(r"\s*(?:⇒|=>|→|->)\s*")
 NUMBER_RE = re.compile(r"-?\d+(?:\.\d+)?")
@@ -15,6 +16,17 @@ LOWER_BETTER = ("마나", "쿨다운", "재사용", "대기시간", "비용")
 BUFF_HINTS = ("상향", "증가", "추가", "버프", "강화", "해금")
 NERF_HINTS = ("하향", "감소", "삭제", "너프", "약화", "비활성화", "제거")
 ROLE_HINTS = ("역할군", "역할", "교체")
+BUG_FIX_HINTS = (
+    "수정",
+    "해결",
+    "오류",
+    "문제",
+    "더 이상",
+    "정상적으로",
+    "fixed",
+    "no longer",
+    "correctly",
+)
 SKIP_SECTIONS = ("패치 하이라이트",)
 
 
@@ -46,6 +58,47 @@ def html_to_text(fragment: str) -> str:
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n+", "\n", text)
     return text.strip()
+
+
+def patch_content_hash(body_html: str) -> str:
+    normalized = re.sub(r"\s+", " ", html_to_text(body_html)).strip()
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def change_item_key(item: ChangeItem) -> str:
+    text = re.sub(r"\s+", " ", item.text).strip()
+    section = re.sub(r"\s+", " ", item.section).strip()
+    return "\x1f".join((item.kind, section, text))
+
+
+def patch_change_keys(summary: PatchSummary) -> List[str]:
+    return [
+        change_item_key(item)
+        for items in (summary.buffs, summary.nerfs, summary.mixed, summary.others)
+        for item in items
+    ]
+
+
+def filter_patch_summary(
+    summary: PatchSummary,
+    allowed_keys: Iterable[str],
+) -> PatchSummary:
+    allowed: Set[str] = set(allowed_keys)
+
+    def filtered(items: List[ChangeItem]) -> List[ChangeItem]:
+        return [item for item in items if change_item_key(item) in allowed]
+
+    return replace(
+        summary,
+        buffs=filtered(summary.buffs),
+        nerfs=filtered(summary.nerfs),
+        mixed=filtered(summary.mixed),
+        others=filtered(summary.others),
+    )
+
+
+def patch_summary_has_changes(summary: PatchSummary) -> bool:
+    return any((summary.buffs, summary.nerfs, summary.mixed, summary.others))
 
 
 def _numbers(text: str) -> List[float]:
@@ -137,8 +190,10 @@ def summarize_patch_html(
             continue
         if section in SKIP_SECTIONS:
             continue
+        lowered = text.lower()
         if not ARROW_RE.search(text) and not any(
-            hint in text for hint in BUFF_HINTS + NERF_HINTS + ROLE_HINTS
+            hint in lowered
+            for hint in BUFF_HINTS + NERF_HINTS + ROLE_HINTS + BUG_FIX_HINTS
         ):
             continue
 
