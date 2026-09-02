@@ -277,14 +277,16 @@ UI 구성 (Components v2 LayoutView):
   · 버튼 이름은 최대 7자, 초과 시 앞 6자 + … 표시
   · 짧은 이름은 양쪽 Unicode 공백으로 7칸을 맞추고 선택은 초록색으로 표시
   · 검색 버튼은 닉네임·사용자명을 입력하는 Modal 표시
-  · guild.fetch_members() 결과에서 bot=False 멤버만 포함
+  · guild 멤버 캐시가 완성된 경우 즉시 사용하고, 아니면 fetch_members() 호출
+  · 한 번 불러온 일반 멤버 목록과 검색 결과를 View에서 재사용해 버튼 응답 지연 축소
+  · bot=False 멤버만 포함
   · 선택 완료 시 원래 팀 정하기 메시지에 선택 상태 반영
 
 팀 배정:
   · parse_team_format("3:3:2") → [3, 3, 2]
   · 선택 인원 수 == sum(sizes) 일 때만 실행
   · random.shuffle 후 팀별 슬라이스
-  · 결과 Embed + TeamResultView (다시 섞기 / 멤버 수정)
+  · 결과 LayoutView + TeamResultView (다시 섞기 / 멤버 수정)
 
 제한:
   · 멤버 버튼은 페이지당 12명 (3×4)

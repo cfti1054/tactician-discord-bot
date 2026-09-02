@@ -72,11 +72,14 @@ def split_teams(member_ids: List[int], sizes: List[int]) -> List[List[int]]:
 
 
 async def fetch_human_members(guild: discord.Guild) -> List[discord.Member]:
-    members = [
-        member
-        async for member in guild.fetch_members(limit=None)
-        if not member.bot
-    ]
+    if guild.chunked:
+        members = [member for member in guild.members if not member.bot]
+    else:
+        members = [
+            member
+            async for member in guild.fetch_members(limit=None)
+            if not member.bot
+        ]
     members.sort(key=lambda member: member.display_name.casefold())
     return members
 
@@ -120,8 +123,7 @@ class MemberSearchModal(discord.ui.Modal, title="멤버 검색"):
         self.picker_view = picker_view
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        self.picker_view.query = self.search_input.value.strip()
-        self.picker_view.page = 0
+        self.picker_view.set_query(self.search_input.value)
         self.picker_view.rebuild_items()
         await interaction.response.edit_message(view=self.picker_view)
 
@@ -142,6 +144,7 @@ class MemberPickerView(discord.ui.LayoutView):
         self.source_message = source_message
         self.selected_ids = set(parent_view.selected_ids)
         self.query = ""
+        self._filtered_members = members
         self.page = 0
         self.rebuild_items()
 
@@ -156,19 +159,25 @@ class MemberPickerView(discord.ui.LayoutView):
 
     @property
     def filtered_members(self) -> List[discord.Member]:
+        return self._filtered_members
+
+    def set_query(self, query: str) -> None:
+        self.query = query.strip()
         query = self.query.casefold()
         if not query:
-            return self.members
-        return [
-            member
-            for member in self.members
-            if query in member.display_name.casefold()
-            or query in member.name.casefold()
-            or (
-                member.global_name is not None
-                and query in member.global_name.casefold()
-            )
-        ]
+            self._filtered_members = self.members
+        else:
+            self._filtered_members = [
+                member
+                for member in self.members
+                if query in member.display_name.casefold()
+                or query in member.name.casefold()
+                or (
+                    member.global_name is not None
+                    and query in member.global_name.casefold()
+                )
+            ]
+        self.page = 0
 
     @property
     def total_pages(self) -> int:
@@ -325,8 +334,7 @@ class MemberPickerView(discord.ui.LayoutView):
         await interaction.response.send_modal(MemberSearchModal(self))
 
     async def _clear_search_callback(self, interaction: discord.Interaction) -> None:
-        self.query = ""
-        self.page = 0
+        self.set_query("")
         self.rebuild_items()
         await interaction.response.edit_message(view=self)
 
@@ -366,6 +374,7 @@ class TeamFormationView(discord.ui.LayoutView):
         self.selected_ids: Set[int] = set()
         self.team_sizes: Optional[List[int]] = None
         self.format_label: Optional[str] = None
+        self.member_cache: Optional[List[discord.Member]] = None
         self.rebuild_items()
 
     def set_format(self, sizes: List[int], *, label: str) -> None:
@@ -548,7 +557,9 @@ class TeamFormationView(discord.ui.LayoutView):
 
         await interaction.response.defer(ephemeral=True)
         try:
-            members = await fetch_human_members(interaction.guild)
+            if self.member_cache is None:
+                self.member_cache = await fetch_human_members(interaction.guild)
+            members = self.member_cache
         except discord.HTTPException as exc:
             await interaction.followup.send(
                 f"❌ 서버 멤버 목록을 불러오지 못했습니다.\n`{exc}`",
@@ -616,14 +627,12 @@ class TeamFormationView(discord.ui.LayoutView):
             format_label=self.format_label,
             selected_ids=set(self.selected_ids),
             teams=teams,
+            member_cache=self.member_cache,
         )
-        await interaction.response.edit_message(
-            embed=result_view.build_embed(),
-            view=result_view,
-        )
+        await interaction.response.edit_message(view=result_view)
 
 
-class TeamResultView(discord.ui.View):
+class TeamResultView(discord.ui.LayoutView):
     def __init__(
         self,
         *,
@@ -633,6 +642,7 @@ class TeamResultView(discord.ui.View):
         format_label: str,
         selected_ids: Set[int],
         teams: List[List[int]],
+        member_cache: Optional[List[discord.Member]],
     ) -> None:
         super().__init__(timeout=VIEW_TIMEOUT)
         self.guild = guild
@@ -641,18 +651,15 @@ class TeamResultView(discord.ui.View):
         self.format_label = format_label
         self.selected_ids = selected_ids
         self.teams = teams
+        self.member_cache = member_cache
+        self.rebuild_items()
 
-    def build_embed(self) -> discord.Embed:
-        embed = discord.Embed(
-            title="🎲 팀 배정 결과",
-            description=f"**{self.format_label}** · {sum(self.team_sizes)}명",
-            color=discord.Color.green(),
-        )
-        embed.set_author(
-            name=f"주최: {self.host.display_name}",
-            icon_url=self.host.display_avatar.url,
-        )
-
+    def _result_text(self) -> str:
+        sections = [
+            "## 🎲 팀 배정 결과",
+            f"**{self.format_label}** · {sum(self.team_sizes)}명",
+            f"주최: **{self.host.display_name}**",
+        ]
         for index, team in enumerate(self.teams):
             emoji = TEAM_EMOJIS[index % len(TEAM_EMOJIS)]
             team_label = chr(ord("A") + index)
@@ -660,29 +667,53 @@ class TeamResultView(discord.ui.View):
             for member_id in team:
                 member = self.guild.get_member(member_id)
                 lines.append(f"• {member.mention if member else f'<@{member_id}>'}")
-            embed.add_field(
-                name=f"{emoji} {team_label}팀",
-                value="\n".join(lines) if lines else "—",
-                inline=True,
+            sections.append(
+                f"### {emoji} {team_label}팀\n"
+                + ("\n".join(lines) if lines else "—")
             )
+        return "\n\n".join(sections)
 
-        embed.set_footer(text=f"{int(VIEW_TIMEOUT // 60)}분 후 만료")
-        return embed
+    def rebuild_items(self) -> None:
+        self.clear_items()
+        self.add_item(discord.ui.TextDisplay(content=self._result_text()))
+        self.add_item(section_separator())
 
-    @discord.ui.button(label="다시 섞기", emoji="🔀", style=discord.ButtonStyle.secondary)
-    async def reshuffle(
+        action_row = discord.ui.ActionRow()
+        reshuffle_button = discord.ui.Button(
+            label="다시 섞기",
+            emoji="🔀",
+            style=discord.ButtonStyle.secondary,
+            custom_id="team_result_reshuffle",
+        )
+        reshuffle_button.callback = self._reshuffle_callback
+        action_row.add_item(reshuffle_button)
+
+        edit_button = discord.ui.Button(
+            label="멤버 수정",
+            emoji="✏️",
+            style=discord.ButtonStyle.primary,
+            custom_id="team_result_edit_members",
+        )
+        edit_button.callback = self._edit_members_callback
+        action_row.add_item(edit_button)
+        self.add_item(action_row)
+        self.add_item(
+            discord.ui.TextDisplay(
+                content=f"-# {int(VIEW_TIMEOUT // 60)}분 후 만료"
+            )
+        )
+
+    async def _reshuffle_callback(
         self,
         interaction: discord.Interaction,
-        button: discord.ui.Button,
     ) -> None:
         self.teams = split_teams(list(self.selected_ids), self.team_sizes)
-        await interaction.response.edit_message(embed=self.build_embed(), view=self)
+        self.rebuild_items()
+        await interaction.response.edit_message(view=self)
 
-    @discord.ui.button(label="멤버 수정", emoji="✏️", style=discord.ButtonStyle.primary)
-    async def edit_members(
+    async def _edit_members_callback(
         self,
         interaction: discord.Interaction,
-        button: discord.ui.Button,
     ) -> None:
         formation_view = TeamFormationView(
             guild=self.guild,
@@ -691,11 +722,9 @@ class TeamResultView(discord.ui.View):
         formation_view.selected_ids = set(self.selected_ids)
         formation_view.team_sizes = list(self.team_sizes)
         formation_view.format_label = self.format_label
+        formation_view.member_cache = self.member_cache
         formation_view.rebuild_items()
-        await interaction.response.edit_message(
-            embed=None,
-            view=formation_view,
-        )
+        await interaction.response.edit_message(view=formation_view)
 
 
 class TeamFormation(commands.Cog):
