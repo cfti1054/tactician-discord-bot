@@ -38,7 +38,56 @@ NERF_COLOR = 0xED4245
 MIXED_COLOR = 0xFEE75C
 OTHER_COLOR = 0x5865F2
 NEWS_COLOR = 0x5865F2
-EMBED_BATCH_SIZE = 10
+MAX_EMBEDS_PER_MESSAGE = 10
+# Discord counts title+description+fields+footer+author across ALL embeds in one message.
+MAX_MESSAGE_EMBED_TEXT = 5800
+MAX_SINGLE_EMBED_TEXT = 5800
+
+
+def _embed_text_length(embed: discord.Embed) -> int:
+    total = 0
+    if embed.title:
+        total += len(embed.title)
+    if embed.description:
+        total += len(embed.description)
+    if embed.footer and embed.footer.text:
+        total += len(embed.footer.text)
+    if embed.author and embed.author.name:
+        total += len(embed.author.name)
+    for field in embed.fields:
+        total += len(field.name) + len(field.value)
+    return total
+
+
+def _batch_embeds_for_send(embeds: List[discord.Embed]) -> List[List[discord.Embed]]:
+    batches: List[List[discord.Embed]] = []
+    current: List[discord.Embed] = []
+    current_size = 0
+
+    for embed in embeds:
+        embed_size = _embed_text_length(embed)
+        if embed_size > MAX_MESSAGE_EMBED_TEXT:
+            if current:
+                batches.append(current)
+                current = []
+                current_size = 0
+            batches.append([embed])
+            continue
+
+        if current and (
+            len(current) >= MAX_EMBEDS_PER_MESSAGE
+            or current_size + embed_size > MAX_MESSAGE_EMBED_TEXT
+        ):
+            batches.append(current)
+            current = []
+            current_size = 0
+
+        current.append(embed)
+        current_size += embed_size
+
+    if current:
+        batches.append(current)
+    return batches
 
 
 def _parse_published_at(value: str) -> Optional[datetime]:
@@ -68,11 +117,16 @@ def _category_embeds(title: str, items: List[ChangeItem], color: int) -> List[di
     field_count = 0
 
     for name, value in fields:
-        if field_count >= 25:
+        field_name = f"▸ {name}"
+        field_size = len(field_name) + len(value)
+        if field_count >= 25 or (
+            field_count > 0
+            and _embed_text_length(current) + field_size > MAX_SINGLE_EMBED_TEXT
+        ):
             embeds.append(current)
             current = discord.Embed(title=f"{title} (계속)", color=color)
             field_count = 0
-        current.add_field(name=f"▸ {name}", value=value, inline=False)
+        current.add_field(name=field_name, value=value, inline=False)
         field_count += 1
 
     embeds.append(current)
@@ -163,18 +217,17 @@ async def send_patch_summary(
     prefix: str = "",
 ) -> None:
     embeds = build_patch_embeds(summary)
-    first_batch = embeds[:EMBED_BATCH_SIZE]
-    await target.send(content=prefix or None, embeds=first_batch)
-
-    for index in range(EMBED_BATCH_SIZE, len(embeds), EMBED_BATCH_SIZE):
-        await target.send(embeds=embeds[index : index + EMBED_BATCH_SIZE])
+    for index, batch in enumerate(_batch_embeds_for_send(embeds)):
+        await target.send(
+            content=(prefix or None) if index == 0 else None,
+            embeds=batch,
+        )
 
 
 async def send_hotfix_summary(target, summary: PatchSummary) -> None:
     embeds = build_hotfix_embeds(summary)
-    await target.send(embeds=embeds[:EMBED_BATCH_SIZE])
-    for index in range(EMBED_BATCH_SIZE, len(embeds), EMBED_BATCH_SIZE):
-        await target.send(embeds=embeds[index : index + EMBED_BATCH_SIZE])
+    for batch in _batch_embeds_for_send(embeds):
+        await target.send(embeds=batch)
 
 
 def build_patch_embed(summary: PatchSummary) -> discord.Embed:
@@ -458,7 +511,12 @@ class TftDigest(commands.Cog):
                 f"❌ 패치 노트를 가져오지 못했습니다.\n`{exc}`"
             )
             return
-        await send_patch_summary(interaction.followup, summary)
+        try:
+            await send_patch_summary(interaction.followup, summary)
+        except Exception as exc:
+            await interaction.followup.send(
+                f"❌ 패치 요약을 Discord에 보내지 못했습니다.\n`{exc}`"
+            )
 
     @app_commands.command(name="tft소식", description="롤토체스 공식 새 소식 최근 글을 보여줍니다.")
     async def latest_news(self, interaction: discord.Interaction):
