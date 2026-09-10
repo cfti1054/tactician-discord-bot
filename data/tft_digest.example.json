@@ -3,5 +3,6 @@
     "channel_name": null,
     "seen_ids": [],
     "patch_snapshots": {},
+    "channel_posts": {},
     "initialized": false
 }

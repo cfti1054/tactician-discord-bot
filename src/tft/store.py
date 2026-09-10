@@ -19,6 +19,7 @@ class TftDigestStore:
             "channel_name": None,
             "seen_ids": [],
             "patch_snapshots": {},
+            "channel_posts": {},
             "initialized": False,
         }
 
@@ -36,6 +37,8 @@ class TftDigestStore:
             self.data["seen_ids"] = []
         if not isinstance(self.data.get("patch_snapshots"), dict):
             self.data["patch_snapshots"] = {}
+        if not isinstance(self.data.get("channel_posts"), dict):
+            self.data["channel_posts"] = {}
 
     def _write(self) -> None:
         os.makedirs(os.path.dirname(self.filepath), exist_ok=True)
@@ -69,6 +72,24 @@ class TftDigestStore:
         value = (self.data.get("patch_snapshots") or {}).get(article_id)
         return dict(value) if isinstance(value, dict) else None
 
+    def channel_patch_post(self, channel_id: int) -> Optional[dict]:
+        value = (self.data.get("channel_posts") or {}).get(str(channel_id))
+        return dict(value) if isinstance(value, dict) else None
+
+    def is_patch_current_in_channel(
+        self,
+        channel_id: int,
+        patch_id: str,
+        content_hash: str,
+    ) -> bool:
+        record = self.channel_patch_post(channel_id)
+        if record is None:
+            return False
+        return (
+            record.get("patch_id") == patch_id
+            and record.get("content_hash") == content_hash
+        )
+
     async def set_channel(self, channel_id: int, channel_name: str) -> None:
         self.data["channel_id"] = channel_id
         self.data["channel_name"] = channel_name
@@ -87,6 +108,21 @@ class TftDigestStore:
     async def mark_initialized(self, article_ids: List[str]) -> None:
         self.data["initialized"] = True
         await self.mark_seen(article_ids)
+
+    async def mark_channel_patch_posted(
+        self,
+        channel_id: int,
+        patch_id: str,
+        content_hash: str,
+        change_keys: List[str],
+    ) -> None:
+        posts = self.data.setdefault("channel_posts", {})
+        posts[str(channel_id)] = {
+            "patch_id": patch_id,
+            "content_hash": content_hash,
+            "change_keys": list(change_keys),
+        }
+        await self.save()
 
     async def set_patch_snapshot(
         self,

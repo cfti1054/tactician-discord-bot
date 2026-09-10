@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import re
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import List, Optional, Set, Tuple
 from zoneinfo import ZoneInfo
 
 import discord
@@ -30,7 +30,6 @@ load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
 KST = ZoneInfo("Asia/Seoul")
 DEFAULT_POLL_MINUTES = 30
 MAX_POSTS_PER_CYCLE = 3
-NOTIFY_CATEGORIES = {"game-updates", "dev"}
 SKIP_CATEGORIES = {"merch"}
 PATCH_COLOR = 0xC8AA6E
 BUFF_COLOR = 0x57F287
@@ -257,9 +256,7 @@ def build_news_embed(card: NewsCard, extra_description: str = "") -> discord.Emb
 def should_auto_notify(card: NewsCard) -> bool:
     if card.category in SKIP_CATEGORIES:
         return False
-    if card.is_patch:
-        return True
-    return card.category in NOTIFY_CATEGORIES
+    return card.is_patch
 
 
 class TftDigest(commands.Cog):
@@ -344,6 +341,129 @@ class TftDigest(commands.Cog):
     ) -> None:
         await self.store.set_patch_snapshot(card.id, content_hash, change_keys)
 
+    async def _record_channel_patch_post(
+        self,
+        channel: discord.TextChannel,
+        card: NewsCard,
+        content_hash: str,
+        change_keys: List[str],
+    ) -> None:
+        await self.store.mark_channel_patch_posted(
+            channel.id,
+            card.id,
+            content_hash,
+            change_keys,
+        )
+
+    async def _channel_has_patch_alert(
+        self,
+        channel: discord.TextChannel,
+        patch_url: str,
+    ) -> bool:
+        try:
+            async for message in channel.history(limit=100):
+                if message.author.id != self.bot.user.id:
+                    continue
+                for embed in message.embeds:
+                    title = embed.title or ""
+                    if embed.url == patch_url and title.startswith(("📌", "🔥")):
+                        return True
+        except discord.HTTPException as exc:
+            print(f"TFT 채널 기록 확인 실패: {exc}")
+        return False
+
+    async def _post_hotfix_if_needed(
+        self,
+        channel: discord.TextChannel,
+        card: NewsCard,
+        summary: PatchSummary,
+        content_hash: str,
+        change_keys: List[str],
+        previous_keys: Set[str],
+    ) -> bool:
+        new_keys = [key for key in change_keys if key not in previous_keys]
+        if not new_keys:
+            return False
+
+        hotfix_summary = filter_patch_summary(summary, new_keys)
+        if not patch_summary_has_changes(hotfix_summary):
+            return False
+
+        await send_hotfix_summary(channel, hotfix_summary)
+        await self._record_channel_patch_post(channel, card, content_hash, change_keys)
+        await self._remember_patch_state(card, content_hash, change_keys)
+        await self.store.mark_seen([card.id])
+        return True
+
+    async def _sync_channel_patch_alerts(
+        self,
+        channel: discord.TextChannel,
+        *,
+        prefix: str = "",
+    ) -> str:
+        card = await self._latest_patch_card()
+        if card is None:
+            return "no_patch"
+
+        summary, content_hash, change_keys = await self._build_patch_state(card)
+        record = self.store.channel_patch_post(channel.id)
+        in_channel = await self._channel_has_patch_alert(channel, summary.url)
+
+        if in_channel:
+            if record and record.get("patch_id") == card.id and record.get("content_hash") == content_hash:
+                return "up_to_date"
+
+            if record and record.get("patch_id") == card.id:
+                previous_keys = set(record.get("change_keys") or [])
+                if await self._post_hotfix_if_needed(
+                    channel,
+                    card,
+                    summary,
+                    content_hash,
+                    change_keys,
+                    previous_keys,
+                ):
+                    return "posted_hotfix"
+
+            await self._record_channel_patch_post(channel, card, content_hash, change_keys)
+            await self._remember_patch_state(card, content_hash, change_keys)
+            await self.store.mark_seen([card.id])
+            return "up_to_date"
+
+        if record and record.get("patch_id") == card.id:
+            previous_keys = set(record.get("change_keys") or [])
+            if await self._post_hotfix_if_needed(
+                channel,
+                card,
+                summary,
+                content_hash,
+                change_keys,
+                previous_keys,
+            ):
+                return "posted_hotfix"
+
+        await send_patch_summary(channel, summary, prefix=prefix)
+        await self._record_channel_patch_post(channel, card, content_hash, change_keys)
+        await self._remember_patch_state(card, content_hash, change_keys)
+        await self.store.mark_seen([card.id])
+        return "posted_full"
+
+    async def _mark_cards_initialized(
+        self,
+        channel: discord.TextChannel,
+        cards: List[NewsCard],
+    ) -> None:
+        latest_patch = next((card for card in cards if card.is_patch), None)
+        seen_ids: List[str] = []
+        for card in cards:
+            if latest_patch is not None and card.id == latest_patch.id:
+                record = self.store.channel_patch_post(channel.id)
+                if record is not None and record.get("patch_id") == latest_patch.id:
+                    seen_ids.append(card.id)
+                continue
+            seen_ids.append(card.id)
+        await self.store.mark_initialized(seen_ids)
+
     async def _check_latest_patch_update(
         self,
         channel: discord.TextChannel,
@@ -373,6 +493,12 @@ class TftDigest(commands.Cog):
             return False
 
         await send_hotfix_summary(channel, hotfix_summary)
+        await self._record_channel_patch_post(
+            channel,
+            latest_patch,
+            content_hash,
+            change_keys,
+        )
         await self._remember_patch_state(latest_patch, content_hash, change_keys)
         return True
 
@@ -409,16 +535,24 @@ class TftDigest(commands.Cog):
                 if card.is_patch:
                     summary, content_hash, change_keys = await self._build_patch_state(card)
                     await send_patch_summary(channel, summary)
+                    await self._record_channel_patch_post(
+                        channel,
+                        card,
+                        content_hash,
+                        change_keys,
+                    )
                     await self._remember_patch_state(card, content_hash, change_keys)
                 else:
                     embed = build_news_embed(card)
                     await channel.send(embed=embed)
                 posted += 1
+                newly_seen.append(card.id)
             except Exception as exc:
                 print(f"TFT 소식 게시 실패 ({card.title}): {exc}")
-            newly_seen.append(card.id)
+                continue
 
-        await self.store.mark_seen(newly_seen)
+        if newly_seen:
+            await self.store.mark_seen(newly_seen)
         return posted
 
     @tasks.loop(minutes=DEFAULT_POLL_MINUTES)
@@ -437,25 +571,22 @@ class TftDigest(commands.Cog):
             return
 
         if not self.store.initialized:
-            latest_patch = next((card for card in cards if card.is_patch), None)
-            if latest_patch is not None:
-                try:
-                    summary, content_hash, change_keys = await self._build_patch_state(latest_patch)
-                    await send_patch_summary(
-                        channel,
-                        summary,
-                        prefix="✅ TFT 알림을 시작했습니다. 현재 최신 패치입니다.",
-                    )
-                    await self._remember_patch_state(
-                        latest_patch,
-                        content_hash,
-                        change_keys,
-                    )
-                except Exception as exc:
-                    print(f"TFT 초기 패치 게시 실패: {exc}")
-            await self.store.mark_initialized([card.id for card in cards])
+            try:
+                await self._sync_channel_patch_alerts(
+                    channel,
+                    prefix="✅ TFT 알림을 시작했습니다. 현재 최신 패치입니다.",
+                )
+            except Exception as exc:
+                print(f"TFT 초기 패치 게시 실패: {exc}")
+            await self._mark_cards_initialized(channel, cards)
             print(f"TFT 소식 초기화 완료 : 기존 {len(cards)}건은 중복 알림에서 제외")
             return
+
+        sync_status = "up_to_date"
+        try:
+            sync_status = await self._sync_channel_patch_alerts(channel)
+        except Exception as exc:
+            print(f"TFT 채널 패치 동기화 실패: {exc}")
 
         posted = await self._post_new_items(channel, cards)
         try:
@@ -463,8 +594,10 @@ class TftDigest(commands.Cog):
         except Exception as exc:
             hotfix_posted = False
             print(f"TFT 추가 패치 감지 실패: {exc}")
+        if sync_status in ("posted_full", "posted_hotfix"):
+            print(f"TFT 채널 패치 동기화 : {sync_status}")
         if posted:
-            print(f"TFT 새 소식 게시 : {posted}건")
+            print(f"TFT 새 패치 게시 : {posted}건")
         if hotfix_posted:
             print("TFT 추가 패치(핫픽스) 게시 완료")
 
@@ -486,15 +619,37 @@ class TftDigest(commands.Cog):
             )
             return
 
+        await interaction.response.defer(ephemeral=True)
+
         await self.store.set_channel(channel.id, channel.name)
-        await interaction.response.send_message(
+
+        status_messages = {
+            "posted_full": "📌 최신 패치 요약을 채널에 올렸습니다.",
+            "posted_hotfix": "🔥 누락된 추가 패치(핫픽스) 요약을 채널에 올렸습니다.",
+            "up_to_date": "ℹ️ 채널에 최신 패치 알림이 이미 있어 추가 게시하지 않았습니다.",
+            "no_patch": "⚠️ 공식 패치 노트를 찾지 못했습니다.",
+        }
+        sync_status = "no_patch"
+        try:
+            sync_status = await self._sync_channel_patch_alerts(channel)
+        except Exception as exc:
+            await interaction.followup.send(
+                f"✅ TFT 알림 채널을 {channel.mention}(으)로 설정했습니다.\n"
+                f"❌ 최신 패치 확인 중 오류가 발생했습니다.\n`{exc}`",
+                ephemeral=True,
+            )
+            self.check_tft_news.restart()
+            return
+
+        status_line = status_messages.get(sync_status, "")
+        await interaction.followup.send(
             f"✅ TFT 알림 채널을 {channel.mention}(으)로 설정했습니다.\n"
-            f"약 {self.poll_minutes}분마다 공식 패치·소식을 확인하고, "
-            "새 글과 기존 패치 글의 추가 패치(핫픽스)를 규칙 기반으로 요약해 올립니다.",
+            f"{status_line}\n"
+            f"약 {self.poll_minutes}분마다 공식 패치를 확인하고, "
+            "새 패치와 기존 패치 글의 추가 패치(핫픽스)를 규칙 기반으로 요약해 올립니다.",
             ephemeral=True,
         )
-        if not self.store.initialized:
-            self.check_tft_news.restart()
+        self.check_tft_news.restart()
 
     @app_commands.command(name="tft패치", description="최신 롤토체스 공식 패치를 규칙 기반으로 요약합니다.")
     async def latest_patch(self, interaction: discord.Interaction):
