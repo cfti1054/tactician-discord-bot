@@ -180,18 +180,14 @@ def _patch_version(title: str) -> str:
 
 
 def build_hotfix_embeds(summary: PatchSummary) -> List[discord.Embed]:
+    changes = summary.buffs + summary.nerfs + summary.mixed + summary.others
     header = discord.Embed(
         title=f"🔥 TFT {_patch_version(summary.title)} 추가 패치(핫픽스)",
-        description="Riot 공식 패치 노트에 새로 추가되거나 수정된 변경 사항입니다.",
+        description="Riot 공식 패치 노트에서 새로 확인된 수정 내용입니다.",
         url=summary.url,
-        color=NERF_COLOR,
+        color=PATCH_COLOR,
     )
-    header.add_field(name="🔺 상향", value=f"**{len(summary.buffs)}**", inline=True)
-    header.add_field(name="🔻 하향", value=f"**{len(summary.nerfs)}**", inline=True)
-    if summary.mixed:
-        header.add_field(name="⚖️ 조정", value=f"**{len(summary.mixed)}**", inline=True)
-    if summary.others:
-        header.add_field(name="🐛 기타·버그 수정", value=f"**{len(summary.others)}**", inline=True)
+    header.add_field(name="🛠️ 수정 항목", value=f"**{len(changes)}건**", inline=True)
     header.add_field(
         name="📄 원문",
         value=f"[Riot 공식 패치 노트 열기]({summary.url})",
@@ -199,13 +195,10 @@ def build_hotfix_embeds(summary: PatchSummary) -> List[discord.Embed]:
     )
     if summary.image_url:
         header.set_thumbnail(url=summary.image_url)
-    header.set_footer(text="Riot 공식 패치 노트 · 규칙 기반 요약")
+    header.set_footer(text="Riot 공식 패치 노트 · 변경 사항 요약")
 
     embeds: List[discord.Embed] = [header]
-    embeds.extend(_category_embeds("🔺 상향", summary.buffs, BUFF_COLOR))
-    embeds.extend(_category_embeds("🔻 하향", summary.nerfs, NERF_COLOR))
-    embeds.extend(_category_embeds("⚖️ 조정", summary.mixed, MIXED_COLOR))
-    embeds.extend(_category_embeds("🐛 기타·버그 수정", summary.others, OTHER_COLOR))
+    embeds.extend(_category_embeds("🛠️ 수정 내용", changes, PATCH_COLOR))
     return embeds
 
 
